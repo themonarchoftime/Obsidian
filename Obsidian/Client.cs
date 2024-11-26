@@ -8,13 +8,13 @@ using Obsidian.Events.EventArgs;
 using Obsidian.Net;
 using Obsidian.Net.Actions.PlayerInfo;
 using Obsidian.Net.Packets;
-using Obsidian.Net.Packets.Configuration;
+using Obsidian.Net.Packets.Common;
 using Obsidian.Net.Packets.Configuration.Clientbound;
-using Obsidian.Net.Packets.Handshaking;
-using Obsidian.Net.Packets.Login;
-using Obsidian.Net.Packets.Play;
+using Obsidian.Net.Packets.Handshake.Serverbound;
+using Obsidian.Net.Packets.Login.Clientbound;
+using Obsidian.Net.Packets.Login.Serverbound;
 using Obsidian.Net.Packets.Play.Clientbound;
-using Obsidian.Net.Packets.Status;
+using Obsidian.Net.Packets.Status.Clientbound;
 using Obsidian.Registries;
 using Obsidian.Services;
 using Obsidian.Utilities.Mojang;
@@ -57,7 +57,7 @@ public sealed class Client : IDisposable
     /// <summary>
     /// Used for signing chat messages.
     /// </summary>
-    internal MessageSigningData? messageSigningData;
+    internal MessageSignature? messageSigningData;
 
     /// <summary>
     /// The server that the client is connected to.
@@ -239,7 +239,7 @@ public sealed class Client : IDisposable
         {
             (var id, var data) = await GetNextPacketAsync();
 
-            if (State == ClientState.Play && data.Length < 1)
+            if (State == ClientState.Play && data.Length < 0)
                 Disconnect();
 
             switch (State)
@@ -251,7 +251,10 @@ public sealed class Client : IDisposable
                     }
                     else if (id == 0x01)
                     {
-                        await HandlePingPongAsync(data);
+                        var pong = Net.Packets.Status.Serverbound.PingRequestPacket.Deserialize(data);
+
+                        SendPacket(new Net.Packets.Status.Clientbound.PongResponsePacket { Timestamp = pong.Timestamp });
+                        Disconnect();
                     }
                     break;
 
@@ -362,6 +365,11 @@ public sealed class Client : IDisposable
 
     private void Configure()
     {
+        this.SendPacket(new SelectKnownPacksPacket
+        {
+            KnownPacks = [new() { Id = "core", Version = "1.21.3", Namespace = "minecraft" }]
+        });
+
         //This is very inconvenient
         this.SendPacket(new RegistryDataPacket(CodecRegistry.Biomes.CodecKey, CodecRegistry.Biomes.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.Dimensions.CodecKey, CodecRegistry.Dimensions.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
@@ -369,15 +377,17 @@ public sealed class Client : IDisposable
         this.SendPacket(new RegistryDataPacket(CodecRegistry.DamageType.CodecKey, CodecRegistry.DamageType.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.TrimPattern.CodecKey, CodecRegistry.TrimPattern.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.TrimMaterial.CodecKey, CodecRegistry.TrimMaterial.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
-        this.SendPacket(new RegistryDataPacket(CodecRegistry.WolfVariant.CodecKey, CodecRegistry.WolfVariant.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
+        //this.SendPacket(new RegistryDataPacket(CodecRegistry.WolfVariant.CodecKey, CodecRegistry.WolfVariant.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
+        this.SendPacket(new RegistryDataPacket(CodecRegistry.WolfVariant.CodecKey, new Dictionary<string, ICodec>()
+        {
+            { CodecRegistry.WolfVariant.Woods.Name, CodecRegistry.WolfVariant.Woods },
+        }));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.PaintingVariant.CodecKey, CodecRegistry.PaintingVariant.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
 
-
-        this.SendPacket(UpdateTagsPacket.FromRegistry);
+        this.SendPacket(UpdateTagsPacket.ClientboundConfiguration with { Tags = TagsRegistry.Categories });
 
         this.SendPacket(FinishConfigurationPacket.Default);
     }
-
 
     private async Task HandleServerStatusRequestAsync()
     {
@@ -385,20 +395,19 @@ public sealed class Client : IDisposable
 
         _ = await this.server.EventDispatcher.ExecuteEventAsync(new ServerStatusRequestEventArgs(this.server, status));
 
-        SendPacket(new RequestResponse(status));
+        SendPacket(new StatusResponsePacket(status));
     }
 
-    private Task HandlePingPongAsync(byte[] data)
+    private void HandlePong(byte[] data)
     {
-        var pong = PingPong.Deserialize(data);
-        SendPacket(pong); // TODO make sure that the packet is fully sent before disconnecting
+        var pong = PongPacket.Deserialize(data);
+        SendPacket(PingPacket.ClientboundPlay with { Payload = pong.Payload });
         Disconnect();
-        return Task.CompletedTask;
     }
 
     private async Task HandleHandshakeAsync(byte[] data)
     {
-        var handshake = Handshake.Deserialize(data);
+        var handshake = IntentionPacket.Deserialize(data);
         var nextState = handshake.NextState;
 
         if (nextState == ClientState.Login)
@@ -430,7 +439,7 @@ public sealed class Client : IDisposable
 
     private async Task HandleLoginStartAsync(byte[] data)
     {
-        var loginStart = LoginStart.Deserialize(data);
+        var loginStart = Net.Packets.Login.Serverbound.HelloPacket.Deserialize(data);
         var username = this.server.Configuration.Network.MulitplayerDebugMode ? $"Player{Globals.Random.Next(1, 999)}" : loginStart.Username;
         var world = (World)this.server.DefaultWorld;
 
@@ -461,7 +470,7 @@ public sealed class Client : IDisposable
 
             this.randomToken = randomToken;
 
-            SendPacket(new EncryptionRequest
+            SendPacket(new Net.Packets.Login.Clientbound.HelloPacket
             {
                 PublicKey = publicKey,
                 VerifyToken = randomToken,
@@ -478,7 +487,7 @@ public sealed class Client : IDisposable
 
             Player = new Player(GuidHelper.FromStringHash($"OfflinePlayer:{username}"), username, this, world);
 
-            this.SendPacket(new LoginSuccess(Player.Uuid, Player.Username)
+            this.SendPacket(new Net.Packets.Login.Clientbound.LoginFinishedPacket(Player.Uuid, Player.Username)
             {
                 SkinProperties = this.Player.SkinProperties,
             });
@@ -503,7 +512,7 @@ public sealed class Client : IDisposable
         }
 
         // Decrypt the shared secret and verify the token
-        var encryptionResponse = EncryptionResponse.Deserialize(data);
+        var encryptionResponse = KeyPacket.Deserialize(data);
 
         sharedKey = packetCryptography.Decrypt(encryptionResponse.SharedSecret);
 
@@ -527,7 +536,7 @@ public sealed class Client : IDisposable
         EncryptionEnabled = true;
         minecraftStream = new EncryptedMinecraftStream(networkStream, sharedKey);
 
-        this.SendPacket(new LoginSuccess(Player.Uuid, Player.Username)
+        this.SendPacket(new LoginFinishedPacket(Player.Uuid, Player.Username)
         {
             SkinProperties = this.Player.SkinProperties,
         });
@@ -536,7 +545,7 @@ public sealed class Client : IDisposable
     // TODO fix compression now????
     private void SetCompression()
     {
-        SendPacket(new SetCompression(CompressionThreshold));
+        SendPacket(new LoginCompressionPacket(CompressionThreshold));
         compressionEnabled = true;
         Logger.LogDebug("Compression has been enabled.");
     }
@@ -561,32 +570,35 @@ public sealed class Client : IDisposable
         await QueuePacketAsync(new LoginPacket
         {
             EntityId = id,
-            Gamemode = Player.Gamemode,
             DimensionNames = CodecRegistry.Dimensions.All.Keys.ToList(),
-            DimensionType = codec.Id,
-            DimensionName = codec.Name,
-            HashedSeed = 0,
+            CommonPlayerSpawnInfo = new()
+            {
+                Gamemode = Player.Gamemode,
+                DimensionType = codec.Id,
+                DimensionName = codec.Name,
+                HashedSeed = 0,
+                Flat = false
+            },
             ReducedDebugInfo = false,
             EnableRespawnScreen = true,
-            Flat = false
         });
+
+        await QueuePacketAsync(new SetDefaultSpawnPositionPacket(Player.world.LevelData.SpawnPosition, 0));
+        await SendTimeUpdateAsync();
+        await SendWeatherUpdateAsync();
 
         await SendServerBrand();
 
         await SendCommandsAsync();
 
-        await QueuePacketAsync(new UpdateRecipeBookPacket
-        {
-            Action = UnlockRecipeAction.Init,
-            FirstRecipeIds = RecipesRegistry.Recipes.Keys.ToList(),
-            SecondRecipeIds = RecipesRegistry.Recipes.Keys.ToList()
-        });
-
+        //Information has to be sent in a certain order or the client will auto throw a network protocol error.
         await SendPlayerInfoAsync();
-        await this.QueuePacketAsync(new GameEventPacket(ChangeGameStateReason.StartWaitingForLevelChunks));
+        await SendInfoAsync();
+
+        await QueuePacketAsync(new GameEventPacket(ChangeGameStateReason.StartWaitingForLevelChunks));
 
         Player.TeleportId = Globals.Random.Next(0, 999);
-        await QueuePacketAsync(new SynchronizePlayerPositionPacket
+        await QueuePacketAsync(new PlayerPositionPacket
         {
             Position = Player.Position,
             Yaw = 0,
@@ -596,7 +608,6 @@ public sealed class Client : IDisposable
         });
 
         await Player.UpdateChunksAsync(distance: 7);
-        await SendInfoAsync();
         await this.server.EventDispatcher.ExecuteEventAsync(new PlayerJoinEventArgs(Player, this.server, DateTimeOffset.Now));
     }
 
@@ -605,26 +616,32 @@ public sealed class Client : IDisposable
     {
         if (Player is null)
             throw new UnreachableException("Player is null, which means the client has not yet logged in.");
-
-        await QueuePacketAsync(new SetDefaultSpawnPositionPacket(Player.world.LevelData.SpawnPosition));
-
-        await SendTimeUpdateAsync();
-        await SendWeatherUpdateAsync();
-        await QueuePacketAsync(new SetContainerContentPacket(0, Player.Inventory.ToList())
+        
+        await QueuePacketAsync(new ContainerSetContentPacket(0, Player.Inventory.ToList())
         {
             StateId = Player.Inventory.StateId++,
             CarriedItem = Player.GetHeldItem(),
         });
 
-        await QueuePacketAsync(new SetEntityMetadataPacket
+        await QueuePacketAsync(new SetEntityDataPacket
         {
             EntityId = this.Player.EntityId,
             Entity = this.Player
         });
     }
 
-    internal async Task DisconnectAsync(ChatMessage reason) => await this.QueuePacketAsync(new DisconnectPacket(reason, State));
-    internal Task SendTimeUpdateAsync() => QueuePacketAsync(new UpdateTimePacket(Player!.world.LevelData.Time, Player.world.LevelData.DayTime));
+    internal async Task DisconnectAsync(ChatMessage reason)
+    {
+        if (this.State == ClientState.Login)
+        {
+            await this.QueuePacketAsync(new LoginDisconnectPacket { ReasonJson = reason.ToString(Globals.JsonOptions) });
+            return;
+        }
+
+        await this.QueuePacketAsync(new DisconnectPacket { Reason = reason });
+    }
+
+    internal Task SendTimeUpdateAsync() => QueuePacketAsync(new SetTimePacket(Player!.world.LevelData.Time, Player.world.LevelData.DayTime, true));
     internal Task SendWeatherUpdateAsync() => QueuePacketAsync(new GameEventPacket(Player!.world.LevelData.Raining ? ChangeGameStateReason.BeginRaining : ChangeGameStateReason.EndRaining));
 
     internal async Task HandleKeepAliveAsync(KeepAlivePacket keepAlive)
@@ -660,10 +677,11 @@ public sealed class Client : IDisposable
 
         Logger.LogDebug("Doing KeepAlive ({keepAliveId}) with {Username} ({Uuid})", keepAliveId, Player.Username, Player.Uuid);
         // now that all is fine and dandy, we'd be fine to enqueue the new keepalive
-        SendPacket(new KeepAlivePacket(keepAliveId)
-        {
-            Id = this.State == ClientState.Configuration ? 0x03 : 0x26
-        });
+
+        var packet = this.State == ClientState.Configuration ? KeepAlivePacket.ClientboundConfiguration with { KeepAliveId = keepAliveId } :
+            KeepAlivePacket.ClientboundPlay with { KeepAliveId = keepAliveId };
+
+        SendPacket(packet);
         missedKeepAlives.Add(keepAliveId);
 
         // TODO: reimplement this? probably in KeepAlivePacket:HandleAsync ⬇️
@@ -738,7 +756,7 @@ public sealed class Client : IDisposable
         }
 
         await QueuePacketAsync(new PlayerInfoUpdatePacket(dict));
-        await QueuePacketAsync(new PlayerAbilitiesPacket(true)
+        await QueuePacketAsync(new Net.Packets.Play.Clientbound.PlayerAbilitiesPacket
         {
             Abilities = Player.Abilities
         });
@@ -750,7 +768,7 @@ public sealed class Client : IDisposable
         {
             if (!compressionEnabled)
             {
-                packet.Serialize(minecraftStream);
+                this.minecraftStream.WritePacket(packet);
             }
             else
             {
@@ -790,15 +808,15 @@ public sealed class Client : IDisposable
     {
         ArgumentNullException.ThrowIfNull(chunk);
 
-        await QueuePacketAsync(new ChunkDataAndUpdateLightPacket(chunk));
+        await QueuePacketAsync(new LevelChunkWithLightPacket(chunk));
     }
-    internal Task UnloadChunkAsync(int x, int z) => LoadedChunks.Contains((x, z)) ? QueuePacketAsync(new UnloadChunkPacket(x, z)) : Task.CompletedTask;
+    internal Task UnloadChunkAsync(int x, int z) => LoadedChunks.Contains((x, z)) ? QueuePacketAsync(new ForgetLevelChunkPacket(x, z)) : Task.CompletedTask;
 
     private async Task SendServerBrand()
     {
         await using var stream = new MinecraftStream();
         await stream.WriteStringAsync(this.server.Brand);
-        await QueuePacketAsync(new PluginMessagePacket("minecraft:brand", stream.ToArray()));
+        await QueuePacketAsync(CustomPayloadPacket.ClientboundPlay with { Channel = "minecraft:brand", PluginData = stream.ToArray() });
         Logger.LogDebug("Sent server brand.");
     }
 
