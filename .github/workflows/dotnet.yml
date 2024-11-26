@@ -3,8 +3,16 @@ name: .NET Build
 on:
   push:
     branches: [ 1.* ]
+    paths:
+      - "**/*.cs"
+      - "**/*.csproj"
+      - "./github/workflows/dotnet.yml"
   pull_request:
     branches: [ 1.* ]
+    paths:
+      - "**/*.cs"
+      - "**/*.csproj"
+      - "./github/workflows/dotnet.yml"
 
 jobs:
   build:
