@@ -6,9 +6,6 @@ on:
     # Publish semver tags as releases.
     tags: ["v*.*.*"]
     # don't publish when we change workflow files
-    paths:
-      - "**/*.cs"
-      - "**/*.csproj"
     paths-ignore:
       - "./github/workflows/*.yml"
 
