@@ -1,13 +1,14 @@
 name: Nuget
 
 on:
+  workflow_dispatch:
   push:
     branches: ["1.*"]
     # Publish semver tags as releases.
     tags: ["v*.*.*"]
     # don't publish when we change workflow files
     paths-ignore:
-      - "./github/workflows/*.yml"
+      - ".github/workflows/*.yml"
 
 env:
   DOTNET_NOLOGO: 1

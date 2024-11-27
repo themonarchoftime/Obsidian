@@ -7,7 +7,7 @@ on:
     paths:
       - "**/*.cs"
       - "**/*.csproj"
-      - "./github/workflows/docfx.yml"
+      - ".github/workflows/docfx.yml"
 jobs:
   update-docs:
     runs-on: ubuntu-latest
