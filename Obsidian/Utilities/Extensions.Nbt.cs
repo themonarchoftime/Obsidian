@@ -436,35 +436,41 @@ public partial class Extensions
         if (!value.GrassColorModifier.IsNullOrEmpty())
             effects.Add(new NbtTag<string>("grass_color_modifier", value.GrassColorModifier));
 
-        if (value.AdditionsSound != null)
-            value.AdditionsSound.WriteAdditionSound(effects);
-
-        if (value.MoodSound != null)
-            value.MoodSound.WriteMoodSound(effects);
-
-        if (value.Music != null)
-            value.Music.WriteMusic(effects);
+        value.AdditionsSound?.WriteAdditionSound(effects);
+        value.MoodSound?.WriteMoodSound(effects);
+        value.Music?.WriteMusic(effects);
 
         if (!value.AmbientSound.IsNullOrEmpty())
             effects.Add(new NbtTag<string>("ambient_sound", value.AmbientSound));
 
-        if (value.Particle != null)
-            value.Particle.WriteParticle(writer);
+        value.Particle?.WriteParticle(writer);
 
         writer.WriteTag(effects);
     }
 
-    public static void WriteMusic(this BiomeMusicEffect musicEffect, NbtCompound compound)
+    public static void WriteMusic(this BiomeMusicEffectData[] musicEffect, NbtCompound compound)
     {
-        var music = new NbtCompound("music")
-        {
-            new NbtTag<bool>("replace_current_music", musicEffect.ReplaceCurrentMusic),
-            new NbtTag<string>("sound", musicEffect.Sound),
-            new NbtTag<int>("max_delay", musicEffect.MaxDelay),
-            new NbtTag<int>("min_delay", musicEffect.MinDelay)
-        };
+        var list = new NbtList(NbtTagType.Compound, "music");
 
-        compound.Add(music);
+        foreach (var musicData in musicEffect)
+        {
+            var data = musicData.Data;
+            var entry = new NbtCompound()
+            {
+                new NbtCompound("data")
+                {
+                    new NbtTag<bool>("replace_current_music", data.ReplaceCurrentMusic),
+                    new NbtTag<string>("sound", data.Sound),
+                    new NbtTag<int>("max_delay", data.MaxDelay),
+                    new NbtTag<int>("min_delay", data.MinDelay)
+                },
+                new NbtTag<int>("weight", musicData.Weight)
+            };
+
+            list.Add(entry);
+        }
+
+        compound.Add(list);
     }
 
     public static void WriteAdditionSound(this BiomeAdditionSound value, NbtCompound compound)
@@ -544,19 +550,18 @@ public partial class Extensions
             new NbtTag<string>("color", materialElement.Description.Color!)
         };
 
-        if (materialElement.OverrideArmorMaterials is Dictionary<string, string> overrideArmorMats)
+        if (materialElement.OverrideArmorAssets is Dictionary<string, string> overrideArmorMats)
         {
-            var overrideArmorMaterialsCompound = new NbtCompound("override_armor_materials");
+            var overrideArmorAssets = new NbtCompound("override_armor_assets");
 
             foreach (var (type, replacement) in overrideArmorMats)
-                overrideArmorMaterialsCompound.Add(new NbtTag<string>(type, replacement));
+                overrideArmorAssets.Add(new NbtTag<string>(type, replacement));
 
-            writer.WriteTag(overrideArmorMaterialsCompound);
+            writer.WriteTag(overrideArmorAssets);
         }
 
         writer.WriteString("ingredient", materialElement.Ingredient);
         writer.WriteString("asset_name", materialElement.AssetName);
-        writer.WriteDouble("item_model_index", materialElement.ItemModelIndex);
         writer.WriteTag(description);
     }
     #endregion
