@@ -5,9 +5,10 @@ on:
   push:
     branches: [1.21.x]
     paths:
-      - "**/*.cs"
-      - "**/*.csproj"
-      - ".github/workflows/docfx.yml"
+      - "./Obsidian.API/**/*.cs"
+      - "./Obsidian.API/*.csproj"
+      - "./Obsidian.SourceGenerators/**/*.cs"
+      - "./Obsidian.SourceGenerators/*.csproj"
 jobs:
   update-docs:
     runs-on: ubuntu-latest

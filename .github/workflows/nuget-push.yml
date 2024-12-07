@@ -6,9 +6,12 @@ on:
     branches: ["1.21.x"]
     # Publish semver tags as releases.
     tags: ["v*.*.*"]
-    # don't publish when we change workflow files
-    paths-ignore:
-      - ".github/workflows/*.yml"
+    # only publish when we change a file here
+    paths:
+      - "./Obsidian.API/**/*.cs"
+      - "./Obsidian.API/*.csproj"
+      - "./Obsidian.SourceGenerators/**/*.cs"
+      - "./Obsidian.SourceGenerators/*.csproj"
 
 env:
   DOTNET_NOLOGO: 1
