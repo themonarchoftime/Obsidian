@@ -8,10 +8,12 @@ on:
     tags: ["v*.*.*"]
     # only publish when we change a file here
     paths:
-      - "./Obsidian.API/**/*.cs"
-      - "./Obsidian.API/*.csproj"
-      - "./Obsidian.SourceGenerators/**/*.cs"
-      - "./Obsidian.SourceGenerators/*.csproj"
+      - "Obsidian.API/**/*.cs"
+      - "Obsidian.API/*.csproj"
+      - "Obsidian/Assets/**/*.json"
+      - "Obsidian.SourceGenerators/**/*.cs"
+      - "Obsidian.SourceGenerators/*.csproj"
+      - ".github/workflows/nuget-push.yml"
 
 env:
   DOTNET_NOLOGO: 1

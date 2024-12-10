@@ -5,10 +5,12 @@ on:
   push:
     branches: [1.21.x]
     paths:
-      - "./Obsidian.API/**/*.cs"
-      - "./Obsidian.API/*.csproj"
-      - "./Obsidian.SourceGenerators/**/*.cs"
-      - "./Obsidian.SourceGenerators/*.csproj"
+      - "Obsidian.API/**/*.cs"
+      - "Obsidian.API/*.csproj"
+      - "Obsidian/Assets/**/*.json"
+      - "Obsidian.SourceGenerators/**/*.cs"
+      - "Obsidian.SourceGenerators/*.csproj"
+      - ".github/workflows/dockfx.yml"
 jobs:
   update-docs:
     runs-on: ubuntu-latest
