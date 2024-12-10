@@ -10,7 +10,7 @@ on:
       - "Obsidian/Assets/**/*.json"
       - "Obsidian.SourceGenerators/**/*.cs"
       - "Obsidian.SourceGenerators/*.csproj"
-      - ".github/workflows/dockfx.yml"
+      - ".github/workflows/docfx.yml"
 jobs:
   update-docs:
     runs-on: ubuntu-latest
