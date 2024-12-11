@@ -28,6 +28,14 @@ var builder = Host.CreateApplicationBuilder();
 
 builder.ConfigureObsidian();
 
+if(!Directory.Exists("logs"))
+{
+    Directory.CreateDirectory("logs");
+}
+// filename with date,time
+var logFile = $"logs/{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log";
+var logFileStream = new FileStream(logFile, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+
 builder.Services.AddLogging(loggingBuilder =>
 {
     loggingBuilder.ClearProviders();
@@ -40,6 +48,8 @@ builder.Services.AddLogging(loggingBuilder =>
         x.IncludeScopes = true;
         x.TimestampFormat = "HH:mm:ss ";
     });
+
+    loggingBuilder.AddProvider(new StreamLoggerProvider(logFileStream));
 });
 
 builder.AddObsidian();
