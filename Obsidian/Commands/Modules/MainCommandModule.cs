@@ -209,7 +209,7 @@ public sealed class MainCommandModule : CommandModuleBase
     [CommandInfo("Gives you a block or item", "/get <item> <amount>")]
     [IssuerScope(CommandIssuers.Client)]
     [RequirePermission(op: true, permissions: "obsidian.give")]
-    public Task GiveAsync(string item) => GiveAsync(item);
+    public Task GiveAsync(string item) => GiveAsync(item, 64);
 
     [CommandOverload]
     public async Task GiveAsync(string item, int amount = 64)
