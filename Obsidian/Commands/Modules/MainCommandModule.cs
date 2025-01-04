@@ -3,6 +3,7 @@ using Obsidian.API.Inventory;
 using Obsidian.API.Utilities;
 using Obsidian.Commands.Framework.Entities;
 using Obsidian.Entities;
+using Obsidian.Entities.Factories;
 using Obsidian.Net.Packets.Play.Clientbound;
 using Obsidian.Registries;
 using Obsidian.WorldData;
@@ -362,12 +363,16 @@ public sealed class MainCommandModule : CommandModuleBase
             return;
         }
 
-        player.World.SpawnEntity(player.Position, type);
+        var builder = player.World.GetNewEntitySpawner()
+            .WithEntityType(type)
+            .AtPosition(player.Position)
+            .Spawn();
+
         await player.SendMessageAsync($"Spawning: {type}");
     }
 
     [Command("derp")]
-    [CommandInfo("derpy derp", "/derp")]
+    [CommandInfo("derpy derp spawns a derp", "/derp [entity_type]")]
     [IssuerScope(CommandIssuers.Client)]
     public async Task DerpAsync(string entityType)
     {
@@ -381,7 +386,17 @@ public sealed class MainCommandModule : CommandModuleBase
             return;
         }
 
-        var frogge = player.World.SpawnEntity(player.Position, type);
+        var frogge = player.World.GetNewEntitySpawner()
+            .WithEntityType(type)
+            .AtPosition(player.Position)
+            .WithCustomName("Derpy Derp")
+            .AsBaby()
+            .IsBurning()
+            .IsGlowing()
+            .WithAbsorbedArrows(50)
+            .WithAbsorbedStingers(50)
+            .WithAmbientPotionEffect(true)
+            .Spawn();
         var server = (this.Server as Server)!;
 
         _ = Task.Run(async () =>

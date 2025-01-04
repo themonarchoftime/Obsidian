@@ -1,11 +1,13 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Obsidian.API.Configuration;
+using Obsidian.API.Entities;
 using Obsidian.API.Registry.Codecs.Dimensions;
 using Obsidian.API.Utilities;
 using Obsidian.Blocks;
 using Obsidian.Concurrency;
 using Obsidian.Entities;
+using Obsidian.Entities.Factories;
 using Obsidian.Nbt;
 using Obsidian.Net.Packets.Play.Clientbound;
 using Obsidian.Registries;
@@ -16,7 +18,7 @@ using System.Threading;
 
 namespace Obsidian.WorldData;
 
-public sealed class World : IWorld
+public sealed partial class World : IWorld
 {
     private const int SpawnChunkRadius = 12;
 
@@ -686,35 +688,16 @@ public sealed class World : IWorld
         if (type == EntityType.FallingBlock)
             return SpawnFallingBlock(position + (0, 20, 0), Material.Sand);
 
-        //TODO improve this
-        Entity entity;
-        if (type.IsNonLiving())
-        {
-            entity = new Entity
-            {
-                Type = type,
-                Position = position,
-                EntityId = Server.GetNextEntityId(),
-                World = this,
-                PacketBroadcaster = this.PacketBroadcaster
-            };
-        }
-        else
-        {
-            entity = new Living
-            {
-                Position = position,
-                EntityId = Server.GetNextEntityId(),
-                Type = type,
-                World = this,
-                PacketBroadcaster = this.PacketBroadcaster
-            };
-        }
+        return GetNewEntitySpawner()
+            .WithEntityType(type)
+            .AtPosition(position)
+            .Spawn();
+    }
 
+    public IEntity SpawnEntity(IEntity entity)
+    {
         entity.SpawnEntity();
-
-        TryAddEntity(entity);
-
+        TryAddEntity(entity as Entity);
         return entity;
     }
 
@@ -945,4 +928,6 @@ public sealed class World : IWorld
             await region.DisposeAsync();
         }
     }
+
+    public IEntitySpawner GetNewEntitySpawner() => new EntitySpawner(this);
 }
