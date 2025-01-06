@@ -8,7 +8,6 @@ using Obsidian.Commands.Framework;
 using Obsidian.Hosting;
 using Obsidian.Plugins.PluginProviders;
 using Obsidian.Plugins.ServiceProviders;
-using Obsidian.Registries;
 using Obsidian.Services;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -18,7 +17,7 @@ using System.Security.Cryptography;
 
 namespace Obsidian.Plugins;
 
-public sealed class PluginManager
+public sealed class PluginManager : IAsyncDisposable
 {
     internal readonly ILogger logger;
     private readonly IConfiguration configuration;
@@ -130,6 +129,20 @@ public sealed class PluginManager
         DirectoryWatcher.Watch("plugins");
     }
 
+    public async Task UnloadPluginsAsync()
+    {
+        var removed = new List<PluginContainer>();
+        foreach (var plugin in this.Plugins)
+        {
+            await this.UnloadPluginAsync(plugin);
+
+            removed.Add(plugin);
+        }
+
+        foreach (var remove in removed)
+            this.plugins.Remove(remove);
+    }
+
     /// <summary>
     /// Loads a plugin from selected path asynchronously.
     /// </summary>
@@ -157,20 +170,6 @@ public sealed class PluginManager
     public async Task UnloadPluginAsync(PluginContainer pluginContainer)
     {
         this.logger.LogInformation("Unloading plugin...");
-
-        bool removed = false;
-        lock (plugins)
-        {
-            removed = plugins.Remove(pluginContainer);
-        }
-
-        if (!removed)
-        {
-            lock (stagedPlugins)
-            {
-                stagedPlugins.Remove(pluginContainer);
-            }
-        }
 
         this.commandHandler.UnregisterPluginCommands(pluginContainer);
 
@@ -231,6 +230,7 @@ public sealed class PluginManager
             builder.ClearProviders();
             builder.AddConfiguration(this.configuration);
         });
+
         this.pluginServiceDescriptors.AddSingleton(serverProvider.GetRequiredService<IOptionsMonitor<ServerConfiguration>>());
     }
 
@@ -308,6 +308,13 @@ public sealed class PluginManager
         var deletedPlugin = plugins.FirstOrDefault(plugin => plugin.Source == path) ?? stagedPlugins.FirstOrDefault(plugin => plugin.Source == path);
         if (deletedPlugin != null)
             await UnloadPluginAsync(deletedPlugin);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await this.UnloadPluginsAsync();
+
+        this.DirectoryWatcher.Dispose();
     }
 }
 
