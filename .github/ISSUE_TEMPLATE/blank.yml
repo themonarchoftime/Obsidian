@@ -4,9 +4,12 @@ title: 'Blank'
 labels: ['sir we are a minecraft server']
 
 body:
-  - type: markdown
+  - type: textarea
     attributes:
-      value: '# ObsidianMC Issue'
+      label: 'Issue Contents'
+      description: 'Fill in your issue contents'
+    validations:
+      required: true
 
   - type: checkboxes
     attributes:
