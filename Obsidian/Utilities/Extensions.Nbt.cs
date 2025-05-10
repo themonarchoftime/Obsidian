@@ -1,5 +1,4 @@
-﻿using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Obsidian.API.Inventory;
+﻿using Obsidian.API.Inventory;
 using Obsidian.API.Registry.Codecs.ArmorTrims.TrimMaterial;
 using Obsidian.API.Registry.Codecs.ArmorTrims.TrimPattern;
 using Obsidian.API.Registry.Codecs.Biomes;
@@ -10,7 +9,6 @@ using Obsidian.API.Registry.Codecs.PaintingVariant;
 using Obsidian.API.Registry.Codecs.WolfVariant;
 using Obsidian.Nbt;
 using Obsidian.Nbt.Interfaces;
-using System.IO;
 using System.Reflection;
 
 namespace Obsidian.Utilities;
