@@ -1,8 +1,5 @@
 ﻿using Obsidian.API.AI;
-using Obsidian.Net;
 using Obsidian.Net.Packets.Play.Clientbound;
-using Obsidian.Services;
-using Obsidian.WorldData;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Obsidian.Entities;
@@ -11,10 +8,10 @@ public class Entity : IEquatable<Entity>, IEntity
 {
     protected virtual ConcurrentDictionary<string, float> Attributes { get; } = new();
 
-    public required IPacketBroadcaster PacketBroadcaster { get; init; }
+    public required IWorld World { get; set; }
 
-    public required IWorld World { get => world; init => world = (World)value; }
-    internal World world = null!;
+    public IPacketBroadcaster PacketBroadcaster => this.World.PacketBroadcaster;
+    public IEventDispatcher EventDispatcher => this.World.EventDispatcher;
 
     #region Location properties
     public VectorF LastPosition { get; set; }
@@ -68,7 +65,7 @@ public class Entity : IEquatable<Entity>, IEntity
     public IGoalController? GoalController { get; set; }
 
     #region Update methods
-    internal virtual async ValueTask UpdateAsync(VectorF position, MovementFlags movementFlags)
+    public virtual async ValueTask UpdateAsync(VectorF position, MovementFlags movementFlags)
     {
         var isNewLocation = position != Position;
 
@@ -89,7 +86,7 @@ public class Entity : IEquatable<Entity>, IEntity
         await UpdatePositionAsync(position, movementFlags);
     }
 
-    internal virtual async ValueTask UpdateAsync(VectorF position, Angle yaw, Angle pitch, MovementFlags movementFlags)
+    public virtual async ValueTask UpdateAsync(VectorF position, Angle yaw, Angle pitch, MovementFlags movementFlags)
     {
         var isNewLocation = position != Position;
         var isNewRotation = yaw != Yaw || pitch != Pitch;
@@ -130,7 +127,7 @@ public class Entity : IEquatable<Entity>, IEntity
         await UpdatePositionAsync(position, yaw, pitch, movementFlags);
     }
 
-    internal virtual ValueTask UpdateAsync(Angle yaw, Angle pitch, MovementFlags movementFlags)
+    public virtual ValueTask UpdateAsync(Angle yaw, Angle pitch, MovementFlags movementFlags)
     {
         var isNewRotation = yaw != Yaw || pitch != Pitch;
 
@@ -179,7 +176,7 @@ public class Entity : IEquatable<Entity>, IEntity
     public async Task UpdatePositionAsync(VectorF pos, MovementFlags movementFlags)
     {
         var (x, z) = pos.ToChunkCoord();
-        var chunk = await world.GetChunkAsync(x, z, false);
+        var chunk = await this.World.GetChunkAsync(x, z, false);
         if (chunk != null && chunk.IsGenerated)
         {
             Position = pos;
@@ -194,7 +191,7 @@ public class Entity : IEquatable<Entity>, IEntity
     public async Task UpdatePositionAsync(VectorF pos, Angle yaw, Angle pitch, MovementFlags movementFlags = MovementFlags.OnGround)
     {
         var (x, z) = pos.ToChunkCoord();
-        var chunk = await world.GetChunkAsync(x, z, false);
+        var chunk = await World.GetChunkAsync(x, z, false);
         if (chunk is { IsGenerated: true })
         {
             Position = pos;
@@ -227,7 +224,7 @@ public class Entity : IEquatable<Entity>, IEntity
         return new(-cosPitch * sinYaw, -sinPitch, cosPitch * cosYaw);
     }
 
-    public virtual async ValueTask RemoveAsync() => await this.world.DestroyEntityAsync(this);
+    public virtual async ValueTask RemoveAsync() => await this.World.DestroyEntityAsync(this);
 
     protected EntityBitMask GenerateBitmask()
     {
@@ -263,15 +260,13 @@ public class Entity : IEquatable<Entity>, IEntity
     {
         writer.WriteEntityMetadataType(0, EntityMetadataType.Byte);
 
-        writer.WriteByte((byte)GenerateBitmask());
+        writer.WriteByte(GenerateBitmask());
 
         writer.WriteEntityMetadataType(1, EntityMetadataType.VarInt);
         writer.WriteVarInt(Air);
 
         writer.WriteEntityMetadataType(2, EntityMetadataType.OptionalTextComponent);
-        writer.WriteBoolean(CustomName is not null);
-        if (CustomName is not null)
-            writer.WriteChat(CustomName);
+        writer.WriteOptional(CustomName);
 
         writer.WriteEntityMetadataType(3, EntityMetadataType.Boolean);
         writer.WriteBoolean(CustomNameVisible);
@@ -283,13 +278,13 @@ public class Entity : IEquatable<Entity>, IEntity
         writer.WriteBoolean(NoGravity);
 
         writer.WriteEntityMetadataType(6, EntityMetadataType.Pose);
-        writer.WriteVarInt((int)this.Pose);
+        writer.WriteVarInt(this.Pose);
 
         writer.WriteEntityMetadataType(7, EntityMetadataType.VarInt);
         writer.WriteVarInt(PowderedSnowTicks);
     }
 
-    public IEnumerable<IEntity> GetEntitiesNear(float distance) => world.GetEntitiesInRange(Position, distance).Where(x => x != this);
+    public IEnumerable<IEntity> GetEntitiesNear(float distance) => World.GetEntitiesInRange(Position, distance).Where(x => x != this);
 
     //TODO GRAVITY
     public virtual ValueTask TickAsync() => default;
@@ -309,7 +304,7 @@ public class Entity : IEquatable<Entity>, IEntity
 
             if (living is Player player)
             {
-                await player.client.QueuePacketAsync(new SetHealthPacket(Health, 20, 5));
+                await player.Client.QueuePacketAsync(new SetHealthPacket(Health, 20, 5));
 
                 if (!player.Alive)
                     await player.KillAsync(source, ChatMessage.Simple("You died xd"));
@@ -354,12 +349,12 @@ public class Entity : IEquatable<Entity>, IEntity
         if (to is not Entity target)
             return;
 
-        if (to.World != world)
+        if (to.World != World)
         {
-            await world.DestroyEntityAsync(this);
+            await World.DestroyEntityAsync(this);
 
-            world = target.world;
-            world.SpawnEntity(to.Position, Type);
+            World = target.World;
+            World.SpawnEntity(to.Position, Type);
 
             return;
         }

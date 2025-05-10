@@ -275,19 +275,12 @@ public static class ModifiedUtf8
     {
         if (bytes.Length == stringLength)
         {
-            if (!BitConverter.IsLittleEndian || stringLength < 16)
-            {
-                GetStringAsciiScalar(bytes, ref destination);
-                return;
-            }
-            else if (Avx2.IsSupported)
-            {
-                GetStringAsciiAvx2(bytes, ref destination);
-                return;
-            }
+            GetStringAsciiScalar(bytes, ref destination);
         }
-
-        GetStringScalar(bytes, ref destination);
+        else
+        {
+            GetStringScalar(bytes, ref destination);
+        }
     }
 
     private static void GetStringAsciiAvx2(ReadOnlySpan<byte> bytes, ref char destination)

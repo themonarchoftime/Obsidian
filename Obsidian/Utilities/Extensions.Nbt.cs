@@ -1,4 +1,5 @@
-﻿using Obsidian.API.Inventory;
+﻿using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Obsidian.API.Inventory;
 using Obsidian.API.Registry.Codecs.ArmorTrims.TrimMaterial;
 using Obsidian.API.Registry.Codecs.ArmorTrims.TrimPattern;
 using Obsidian.API.Registry.Codecs.Biomes;
@@ -7,8 +8,9 @@ using Obsidian.API.Registry.Codecs.DamageTypes;
 using Obsidian.API.Registry.Codecs.Dimensions;
 using Obsidian.API.Registry.Codecs.PaintingVariant;
 using Obsidian.API.Registry.Codecs.WolfVariant;
-using Obsidian.API.Utilities;
 using Obsidian.Nbt;
+using Obsidian.Nbt.Interfaces;
+using System.IO;
 using System.Reflection;
 
 namespace Obsidian.Utilities;
@@ -33,6 +35,17 @@ public partial class Extensions
         return compound;
     }
 
+    public static void WriteNbtCompound(this INetStreamWriter writer, NbtCompound compound)
+    {
+        using var nbtWriter = new RawNbtWriter(true);
+
+        foreach (var (_, tag) in compound)
+            nbtWriter.WriteTag(tag);
+
+        nbtWriter.TryFinish();
+
+        writer.WriteByteArray(nbtWriter.Data);
+    }
 
     //DESERIALIZE ITEM COMPONENTS
     public static ItemStack? ItemFromNbt(this NbtCompound? item)
@@ -90,9 +103,9 @@ public partial class Extensions
     #region Dimension Codec Writing
     public static NbtCompound WriteElement(this DimensionCodec value)
     {
-        INbtTag monsterSpawnLightLevel;
+        INbtTag monsterSpawnLightLevel = default!;
 
-        if (value.Element.MonsterSpawnLightLevel.Value.HasValue)
+        if (value.Element.MonsterSpawnLightLevel.Value is MonsterSpawnLightLevelValue lightLevelValue)
         {
             //monsterSpawnLightLevel = new NbtCompound("monster_spawn_light_level")
             //{
@@ -100,10 +113,10 @@ public partial class Extensions
             //    new NbtTag<int>("max_inclusive", value.Element.MonsterSpawnLightLevel.Value?.MaxInclusive ?? 0),
             //    new NbtTag<string>("type", value.Element.MonsterSpawnLightLevel.Value?.Type ?? string.Empty)
             //};
-            monsterSpawnLightLevel = new NbtTag<int>("monster_spawn_light_level", value.Element.MonsterSpawnLightLevel.Value?.MaxInclusive ?? 0);
+            monsterSpawnLightLevel = new NbtTag<int>("monster_spawn_light_level", lightLevelValue.MaxInclusive);
         }
-        else
-            monsterSpawnLightLevel = new NbtTag<int>("monster_spawn_light_level", value.Element.MonsterSpawnLightLevel.IntValue ?? 0);
+        else if(value.Element.MonsterSpawnLightLevel.IntValue is int intValue)
+            monsterSpawnLightLevel = new NbtTag<int>("monster_spawn_light_level", intValue);
 
         var compound = new NbtCompound("element")
         {
@@ -157,7 +170,7 @@ public partial class Extensions
         list.Add(compound);
     }
 
-    public static void WriteElement(this DimensionCodec value, NbtWriter writer)
+    public static void WriteElement(this DimensionCodec value, INbtWriter writer)
     {
         writer.WriteBool("piglin_safe", value.Element.PiglinSafe);
         writer.WriteBool("natural", value.Element.Natural);
@@ -208,7 +221,7 @@ public partial class Extensions
 
     #region Damage Type Codec Writing
 
-    public static void WriteElement(this DamageTypeCodec value, NbtWriter writer)
+    public static void WriteElement(this DamageTypeCodec value, INbtWriter writer)
     {
         var damageTypeElement = value.Element;
 
@@ -224,7 +237,7 @@ public partial class Extensions
     #endregion
 
     #region Chat Codec Writing
-    public static void WriteElement(this ChatTypeCodec value, NbtWriter writer)
+    public static void WriteElement(this ChatTypeCodec value, INbtWriter writer)
     {
         var chatElement = value.Element;
         var chat = chatElement.Chat;
@@ -265,7 +278,7 @@ public partial class Extensions
     #endregion
 
     #region Biome Codec Writing
-    public static void WriteElement(this BiomeCodec value, NbtWriter writer)
+    public static void WriteElement(this BiomeCodec value, INbtWriter writer)
     {
         writer.WriteBool("has_precipitation", value.Element.HasPrecipitation);
         writer.WriteFloat("depth", value.Element.Depth);
@@ -282,7 +295,7 @@ public partial class Extensions
             writer.WriteString("temperature_modifier", value.Element.TemperatureModifier);
     }
 
-    public static void WriteEffect(this BiomeEffect value, NbtWriter writer)
+    public static void WriteEffect(this BiomeEffect value, INbtWriter writer)
     {
         var effects = new NbtCompound("effects")
         {
@@ -364,7 +377,7 @@ public partial class Extensions
         compound.Add(mood);
     }
 
-    public static void WriteParticle(this BiomeParticle value, NbtWriter writer)
+    public static void WriteParticle(this BiomeParticle value, INbtWriter writer)
     {
         var particle = new NbtCompound("particle")
         {
@@ -387,7 +400,7 @@ public partial class Extensions
 
     #region Trim Pattern Writing 
 
-    public static void WriteElement(this TrimPatternCodec value, NbtWriter writer)
+    public static void WriteElement(this TrimPatternCodec value, INbtWriter writer)
     {
         var patternElement = value.Element;
 
@@ -405,7 +418,7 @@ public partial class Extensions
     #endregion
 
     #region Trim Material Writing
-    public static void WriteElement(this TrimMaterialCodec value, NbtWriter writer)
+    public static void WriteElement(this TrimMaterialCodec value, INbtWriter writer)
     {
         var materialElement = value.Element;
 
@@ -433,7 +446,7 @@ public partial class Extensions
 
     #region Wolf Variant Writing
 
-    public static void WriteElement(this WolfVariantCodec value, NbtWriter writer)
+    public static void WriteElement(this WolfVariantCodec value, INbtWriter writer)
     {
         var materialElement = value.Element;
 
@@ -445,7 +458,7 @@ public partial class Extensions
     #endregion
 
     #region Painting Variant Writing
-    public static void WriteElement(this PaintingVariantCodec value, NbtWriter writer)
+    public static void WriteElement(this PaintingVariantCodec value, INbtWriter writer)
     {
         var materialElement = value.Element;
 

@@ -1,12 +1,10 @@
-﻿using Obsidian.API.Utilities;
-using Obsidian.Nbt;
-using Obsidian.WorldData;
+﻿using Obsidian.Nbt;
 
 namespace Obsidian.Net.Packets.Play.Clientbound;
 
-public partial class LevelChunkWithLightPacket(Chunk chunk)
+public partial class LevelChunkWithLightPacket(IChunk chunk)
 {
-    public Chunk Chunk { get; } = chunk;
+    public IChunk Chunk { get; } = chunk;
 
     public override void Serialize(INetStreamWriter writer)
     {
@@ -14,36 +12,35 @@ public partial class LevelChunkWithLightPacket(Chunk chunk)
         writer.WriteInt(Chunk.Z);
 
         //Chunk.CalculateHeightmap();
-        using (var heightmapStream = new MinecraftStream())
+        var heightmapBuffer = new NetworkBuffer();
+
+        using var nbtWriter = new RawNbtWriter(true);
+
+        foreach (var (type, heightmap) in Chunk.Heightmaps)
+            if (type == HeightmapType.MotionBlocking)
+                nbtWriter.WriteTag(new NbtArray<long>(type.ToString().ToSnakeCase().ToUpper(), heightmap.GetDataArray()));
+
+        nbtWriter.EndCompound();
+        nbtWriter.TryFinish();
+
+        heightmapBuffer.Write(nbtWriter.Data);
+
+        writer.Write(heightmapBuffer);
+
+        var sectionBuffer = new NetworkBuffer();
+
+        foreach (var section in Chunk.Sections)
         {
-            var nbtWriter = new NbtWriter(heightmapStream, true);
-            foreach (var (type, heightmap) in Chunk.Heightmaps)
-                if (type == ChunkData.HeightmapType.MotionBlocking)
-                    nbtWriter.WriteTag(new NbtArray<long>(type.ToString().ToSnakeCase().ToUpper(), heightmap.GetDataArray()));
-
-            nbtWriter.EndCompound();
-            nbtWriter.TryFinish();
-
-            heightmapStream.Position = 0;
-            heightmapStream.CopyTo((MinecraftStream)writer);
-        }
-
-        using (var sectionStream = new MinecraftStream())
-        {
-            foreach (var section in Chunk.Sections)
+            if (!section.BlockStateContainer.IsEmpty)
             {
-                if (section is { BlockStateContainer.IsEmpty: false })
-                {
-                    section.BlockStateContainer.WriteTo(sectionStream);
-                    section.BiomeContainer.WriteTo(sectionStream);
-                }
+                section.BlockStateContainer.WriteTo(sectionBuffer);
+                section.BiomeContainer.WriteTo(sectionBuffer);
             }
-
-            sectionStream.Position = 0;
-
-            writer.WriteVarInt((int)sectionStream.Length);
-            sectionStream.CopyTo((MinecraftStream)writer);
         }
+
+        writer.WriteVarInt((int)sectionBuffer.Size);
+        writer.Write(sectionBuffer);
+
 
         // Num block entities
         writer.WriteVarInt(0);

@@ -10,7 +10,7 @@ internal sealed class LoginClientHandler : ClientHandler
 {
     public async override ValueTask<bool> HandleAsync(PacketData packetData)
     {
-        var (id, data) = packetData;
+        var (id, buffer) = packetData;
 
         switch (id)
         {
@@ -21,7 +21,7 @@ internal sealed class LoginClientHandler : ClientHandler
 
                     try
                     {
-                        await this.HandleLoginStartAsync(data);
+                        await this.HandleLoginStartAsync(buffer.Data);
                     }
                     catch { return false; }
 
@@ -31,7 +31,7 @@ internal sealed class LoginClientHandler : ClientHandler
                 {
                     try
                     {
-                        await this.HandleEncryptionResponseAsync(data);
+                        await this.HandleEncryptionResponseAsync(buffer.Data);
                     }
                     catch { return false; }
 
@@ -72,9 +72,10 @@ internal sealed class LoginClientHandler : ClientHandler
         this.SendPacket(new RegistryDataPacket(CodecRegistry.DamageType.CodecKey, CodecRegistry.DamageType.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.TrimPattern.CodecKey, CodecRegistry.TrimPattern.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.TrimMaterial.CodecKey, CodecRegistry.TrimMaterial.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
+        //Figure out why sending all the wolf variants throw a network protocol error
         this.SendPacket(new RegistryDataPacket(CodecRegistry.WolfVariant.CodecKey, new Dictionary<string, ICodec>()
         {
-            { CodecRegistry.WolfVariant.Woods.Name, CodecRegistry.WolfVariant.Woods },
+            { CodecRegistry.WolfVariant.Black.Name, CodecRegistry.WolfVariant.Black },
         }));
         this.SendPacket(new RegistryDataPacket(CodecRegistry.PaintingVariant.CodecKey, CodecRegistry.PaintingVariant.All.ToDictionary(x => x.Key, x => (ICodec)x.Value)));
 
@@ -100,7 +101,7 @@ internal sealed class LoginClientHandler : ClientHandler
             return;
         }
 
-        if (this.Server.Configuration.Whitelist && !this.Server.IsWhitedlisted(username))
+        if (this.Server.Configuration.Whitelist && !this.Server.IsWhitelisted(username))
         {
             await this.Client.DisconnectAsync("You are not whitelisted on this server\nContact server administrator");
         }
