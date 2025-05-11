@@ -34,9 +34,9 @@ public class ChunkBuilder
         var temperatureNoise = Settings.NoiseRouter.Temperature;
         var vegetationNoise = Settings.NoiseRouter.Vegetation;
         //THis is breaking things idk why
-        //var terrainFactor = NoiseRegistry.DensityFunctions.Overworld.Factor;
-        //var terrainDepth = NoiseRegistry.DensityFunctions.Overworld.Depth;
-        //baseDensity = NoiseGradientDensity(new Cache2DDensityFunction() { Argument = terrainFactor }, terrainDepth);
+        var terrainFactor = NoiseRegistry.DensityFunctions.Overworld.Factor;
+        var terrainDepth = NoiseRegistry.DensityFunctions.Overworld.Depth;
+        baseDensity = NoiseGradientDensity(new Cache2DDensityFunction() { Argument = terrainFactor }, terrainDepth);
     }
 
     private static IDensityFunction NoiseGradientDensity(IDensityFunction a, IDensityFunction b)
