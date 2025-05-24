@@ -1,10 +1,8 @@
 // This would be saved in a file called [playeruuid].dat which holds a bunch of NBT data.
 // https://wiki.vg/Map_Format
-using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Obsidian.API.Events;
 using Obsidian.API.Inventory;
-using Obsidian.Nbt;
 using Obsidian.Net.Actions.PlayerInfo;
 using Obsidian.Net.Packets;
 using Obsidian.Net.Packets.Play.Clientbound;
@@ -23,7 +21,7 @@ public sealed partial class Player : Living, IPlayer
 
     public IClient Client { get; internal set; }
 
-    internal ILogger Logger { get; set; }
+    public ILogger Logger => this.Client.Logger;
 
     internal HashSet<IPlayer> visiblePlayers = [];
 
@@ -401,13 +399,13 @@ public sealed partial class Player : Living, IPlayer
         //TODO fix possibly an extension method?
         if (LeftShoulder is not null)
         {
-            writer.WriteEntityMetadataType(19, EntityMetadataType.Nbt);
+            writer.WriteEntityMetadataType(19, EntityMetadataType.CompoundTag);
             writer.WriteNbtCompound([]);
         }
 
         if (RightShoulder is not null)
         {
-            writer.WriteEntityMetadataType(20, EntityMetadataType.Nbt);
+            writer.WriteEntityMetadataType(20, EntityMetadataType.CompoundTag);
             writer.WriteNbtCompound([]);
         }
     }
