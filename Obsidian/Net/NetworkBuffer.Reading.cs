@@ -27,7 +27,7 @@ public partial class NetworkBuffer : INetStreamReader
 
     [ReadMethod, VarLength]
     public int ReadVarInt()
-   {
+    {
         int numRead = 0;
         int result = 0;
         byte read;
@@ -99,11 +99,11 @@ public partial class NetworkBuffer : INetStreamReader
 
         var itemStack = new ItemStack(item, count);
 
-        var componentsToAdd = this.ReadVarInt();
-        var componentsToRemove = this.ReadVarInt();
-
         if (itemStack.Type == Material.Air)
             return itemStack;
+
+        var componentsToAdd = this.ReadVarInt();
+        var componentsToRemove = this.ReadVarInt();
 
         for (int i = 0; i < componentsToAdd; i++)
         {
@@ -117,6 +117,37 @@ public partial class NetworkBuffer : INetStreamReader
 
         return itemStack;
     }
+
+    public IHashedItemStack? ReadHashedItemStack()
+    {
+        if (!this.ReadBoolean())
+            return null;
+
+        var item = ItemsRegistry.Get(ReadVarInt());
+        var count = this.ReadVarInt();
+      
+        var itemStack = new HashedItemStack(item, count);
+
+        //Might be best to change this
+        if (itemStack.Type == Material.Air)
+            return itemStack;
+
+        var componentsToAdd = this.ReadVarInt();
+        for (int i = 0; i < componentsToAdd; i++)
+        {
+            var type = this.ReadVarInt<DataComponentType>();
+
+            itemStack.HashedComponents.Add(type, this.ReadInt());
+        }
+
+        var componentsToRemove = this.ReadVarInt();
+
+        for (int i = 0; i < componentsToRemove; i++)
+            itemStack.ComponentsToRemove.Add(this.ReadVarInt<DataComponentType>());
+
+        return itemStack;
+    }
+
 
     [ReadMethod]
     public DateTimeOffset ReadDateTimeOffset() => DateTimeOffset.FromUnixTimeMilliseconds(this.ReadLong());
@@ -197,7 +228,7 @@ public partial class NetworkBuffer : INetStreamReader
             Y = (float)ReadDouble(),
             Z = (float)ReadDouble()
         };
-    } 
+    }
 
     [ReadMethod, DataFormat(typeof(float))]
     public VectorF ReadAbsoluteFloatPositionF()
@@ -225,7 +256,7 @@ public partial class NetworkBuffer : INetStreamReader
         var reader = new NbtReader(ms);
         var chatMessage = ChatMessage.Empty;
 
-        if(!reader.TryReadNextTag<NbtCompound>(false, out var root))
+        if (!reader.TryReadNextTag<NbtCompound>(false, out var root))
         {
             this.offset += (int)ms.Position;
             return chatMessage;
@@ -386,7 +417,7 @@ public partial class NetworkBuffer : INetStreamReader
     };
 
     [ReadMethod]
-    public SignedMessage ReadSignedMessage() => 
+    public SignedMessage ReadSignedMessage() =>
         new() { UserId = this.ReadGuid(), Signature = this.ReadUInt8Array(256) };
 
     [ReadMethod]

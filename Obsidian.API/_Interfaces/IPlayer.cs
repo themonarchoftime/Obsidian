@@ -57,6 +57,7 @@ public interface IPlayer : ILiving
     public Task SaveAsync();
     public Task LoadAsync(bool loadFromPersistentWorld = true);
 
+    public ValueTask DisconnectAsync(ChatMessage reason);
     public ValueTask SendMessageAsync(ChatMessage message);
     public ValueTask SendMessageAsync(ChatMessage message, Guid sender, SecureMessageSignature messageSignature);
     public ValueTask SetActionBarTextAsync(ChatMessage message);

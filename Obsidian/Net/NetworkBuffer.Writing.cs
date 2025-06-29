@@ -411,6 +411,7 @@ public partial class NetworkBuffer : INetStreamWriter
         foreach (var component in value)
         {
             this.WriteVarInt(component.Type);
+
             component.Write(this);
         }
 
