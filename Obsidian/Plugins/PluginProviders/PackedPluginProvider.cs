@@ -26,29 +26,57 @@ public sealed class PackedPluginProvider(PluginManager pluginManager, ILogger lo
         var apiVersion = reader.ReadString();
 
         var hash = reader.ReadBytes(SHA384.HashSizeInBytes);
-        var isSigned = reader.ReadBoolean();
-
-        byte[]? signature = isSigned ? reader.ReadBytes(SHA384.HashSizeInBits) : null;
+        byte[]? signature = null;
+        if (reader.ReadBoolean())
+        {
+            var length = reader.ReadInt32();
+            signature = reader.ReadBytes(length);
+        }
 
         var dataLength = reader.ReadInt32();
+        var dataPos = fs.Position;
 
-        var curPos = fs.Position;
-
-        //Don't load untrusted plugins
-        var isSigValid = await this.TryValidatePluginAsync(fs, hash, path, isSigned, signature);
+        var isSigValid = await this.TryValidatePluginAsync(fs, hash, path, signature);
         if (!isSigValid)
             return null;
 
-        fs.Position = curPos;
-
+        fs.Position = dataPos;
         var pluginAssembly = reader.ReadString();
         var pluginVersion = reader.ReadString();
+
+        var pluginName = reader.ReadString();
+        var pluginId = reader.ReadString();
+        var pluginAuthors = reader.ReadString();
+        var pluginDescription = reader.ReadString();
+        var projectUrl = reader.ReadString();
+
+        var dependenciesLength = reader.ReadInt32();
+        var dependencies = new PluginDependency[dependenciesLength];
+        for (int i = 0; i < dependenciesLength; i++)
+        {
+            dependencies[i] = new()
+            {
+                Id = reader.ReadString(),
+                Version = reader.ReadString(),
+                Required = reader.ReadBoolean()
+            };
+        }
 
         var loadContext = new PluginLoadContext(pluginAssembly);
 
         var entries = await this.InitializeEntriesAsync(reader, fs);
 
-        var partialContainer = this.BuildPartialContainer(loadContext, path, entries, isSigValid);
+        var partialContainer = BuildPartialContainer(loadContext, path, entries, isSigValid, new PluginInfo
+        {
+            Id = pluginId,
+            Name = pluginName,
+            Version = Version.Parse(pluginVersion),
+            Authors = pluginAuthors.Split(','),
+            Dependencies = dependencies,
+            Description = pluginDescription,
+            ProjectUrl = Uri.TryCreate(projectUrl, UriKind.Absolute, out var uri) ? uri : null,
+            AssemblyName = pluginAssembly
+        });
 
         //Can't load until those plugins are loaded
         if (partialContainer.Info.Dependencies.Any(x => x.Required && !this.pluginManager.Plugins.Any(d => d.Info.Id == x.Id)))
@@ -124,12 +152,11 @@ public sealed class PackedPluginProvider(PluginManager pluginManager, ILogger lo
     /// Verifies the file hash and tries to validate the signature
     /// </summary>
     /// <returns>True if the provided plugin was successfully validated. Otherwise false.</returns>
-    private async Task<bool> TryValidatePluginAsync(FileStream fs, byte[] hash, string path, bool isSigned, byte[]? signature = null)
+    private async Task<bool> TryValidatePluginAsync(FileStream fs, byte[] hash, string path, byte[]? signature = null)
     {
         using (var sha384 = SHA384.Create())
         {
             var verifyHash = await sha384.ComputeHashAsync(fs);
-
             if (!verifyHash.SequenceEqual(hash))
             {
                 this.logger.LogWarning("File {filePath} integrity does not match specified hash.", path);
@@ -140,19 +167,15 @@ public sealed class PackedPluginProvider(PluginManager pluginManager, ILogger lo
         var isSigValid = true;
         if (!this.pluginManager.server.Configuration.AllowUntrustedPlugins)
         {
-            if (!isSigned)
+            if (signature == null)
                 return false;
-
-            var deformatter = new RSAPKCS1SignatureDeformatter();
-            deformatter.SetHashAlgorithm("SHA384");
 
             using var rsa = RSA.Create();
             foreach (var rsaParameter in this.pluginManager.AcceptedKeys)
             {
                 rsa.ImportParameters(rsaParameter);
-                deformatter.SetKey(rsa);
 
-                isSigValid = deformatter.VerifySignature(hash, signature!);
+                isSigValid = rsa.VerifyData(hash, signature, HashAlgorithmName.SHA384, RSASignaturePadding.Pkcs1);
 
                 if (isSigValid)
                     break;
@@ -205,18 +228,17 @@ public sealed class PackedPluginProvider(PluginManager pluginManager, ILogger lo
         return entries;
     }
 
-    private PluginContainer BuildPartialContainer(PluginLoadContext loadContext, string path,
-        Dictionary<string, PluginFileEntry> entries, bool validSignature)
+    private static PluginContainer BuildPartialContainer(PluginLoadContext loadContext, string path,
+        Dictionary<string, PluginFileEntry> entries, bool validSignature, PluginInfo info)
     {
         var pluginContainer = new PluginContainer
         {
             LoadContext = loadContext,
             Source = path,
             FileEntries = entries.ToFrozenDictionary(),
-            ValidSignature = validSignature
+            ValidSignature = validSignature,
+            Info = info
         };
-
-        pluginContainer.Initialize();
 
         return pluginContainer;
     }
@@ -255,22 +277,15 @@ public sealed class PackedPluginProvider(PluginManager pluginManager, ILogger lo
                 if (name == pluginAssembly || runtimeElement.ToString() == "{}")
                     continue;
 
+                if (this.pluginManager.TryGetDependency(name, pluginContainer, out _))
+                    continue;
+
                 var runtime = runtimeElement.Deserialize<DependencyRuntime>(JsonSerializerOptions.Web);
                 var assemblyName = new AssemblyName
                 {
                     Name = name,
                     Version = new(runtime.AssemblyVersion),
                 };
-
-                var depends = pluginContainer.Info.Dependencies.Select(x => x.Id)
-                    .SelectMany(x => this.pluginManager.Plugins.Where(p => p.Info.Id == x));
-
-                //TODO allow users to define what version of a dependency is allowed/valid e.g version: >1.0.0 or >=1.0.0 or =1.0.0.
-                var dependency = depends.FirstOrDefault(x => x.PluginAssembly.GetName().Name == name && x.Info.Version == assemblyName.Version);
-
-                //we don't need to load this into the context.
-                if (dependency != null)
-                    continue;
 
                 if (pluginContainer.FileEntries.ContainsKey($"${name}.pdb"))
                 {
