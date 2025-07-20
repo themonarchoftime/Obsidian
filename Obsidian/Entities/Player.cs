@@ -47,7 +47,7 @@ public sealed partial class Player : Living, IPlayer
         get => this.Input.HasFlag(PlayerInput.Sneak);
         set
         {
-            if(value)
+            if (value)
                 this.Input |= PlayerInput.Sneak;
             else
                 this.Input &= ~PlayerInput.Sneak;
@@ -90,7 +90,22 @@ public sealed partial class Player : Living, IPlayer
 
     public PlayerAbility Abilities { get; set; }
 
-    public IScoreboard? CurrentScoreboard { get; set; }
+    public IScoreboard? CurrentScoreboard
+    {
+        get; 
+        
+        set
+        {
+            if (field == value)
+                return;
+
+            field?.RemovePlayer(this.EntityId);
+
+            value?.AddPlayer(this.EntityId);
+
+            field = value;
+        }
+    }
 
     public bool Sleeping { get; set; }
     public bool InHorseInventory { get; set; }
@@ -161,8 +176,8 @@ public sealed partial class Player : Living, IPlayer
         World = world;
         Type = EntityType.Player;
 
-        PersistentDataFile = Path.Combine(Obsidian.Server.PersistentDataPath, $"{Uuid}.dat");
-        PersistentDataBackupFile = Path.Combine(Obsidian.Server.PersistentDataPath, $"{Uuid}.dat.old");
+        PersistentDataFile = Path.Combine(ServerConstants.PersistentDataPath, $"{Uuid}.dat");
+        PersistentDataBackupFile = Path.Combine(ServerConstants.PersistentDataPath, $"{Uuid}.dat.old");
 
         Health = 20f;
 

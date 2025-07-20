@@ -1,5 +1,6 @@
 using Obsidian.API.ChunkData;
 using Obsidian.API.Entities;
+using System.Collections.Concurrent;
 
 namespace Obsidian.API;
 
@@ -30,11 +31,14 @@ public interface IWorld : IAsyncDisposable
     public IEventDispatcher EventDispatcher { get; }
     public IWorldManager WorldManager { get; }
 
+    public ConcurrentDictionary<Guid, IPlayer> Players { get; }
+
     public IEntitySpawner GetNewEntitySpawner();
 
     public IEnumerable<IEntity> GetNonPlayerEntitiesInRange(VectorF location, float distance);
     public IEnumerable<IEntity> GetEntitiesInRange(VectorF location, float distance);
     public IEnumerable<IPlayer> GetPlayersInRange(VectorF location, float distance);
+    public IEnumerable<IPlayer> GetPlayersInChunkRange(Vector worldPosition);
 
     /// <summary>
     /// Gets a Chunk from a Region.

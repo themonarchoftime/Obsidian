@@ -7,19 +7,14 @@ using Obsidian.API.Commands;
 using Obsidian.API.Configuration;
 using Obsidian.API.Crafting;
 using Obsidian.Commands.Framework;
-using Obsidian.Entities;
 using Obsidian.Net;
-using Obsidian.Net.Packets;
 using Obsidian.Net.Packets.Common;
 using Obsidian.Net.Packets.Play.Clientbound;
 using Obsidian.Plugins;
 using Obsidian.Services;
-using Obsidian.WorldData;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Sockets;
-using System.Reflection;
-using System.Text;
 using System.Threading;
 
 namespace Obsidian;
@@ -28,32 +23,10 @@ public sealed partial class Server : IServer
 {
     private static int EntityCounter = 0;
 
-#if RELEASE
-    public const string VERSION = "0.1";
-#else
-    public static string VERSION
-    {
-        get
-        {
-            var informalVersion = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-            if (informalVersion != null && informalVersion.InformationalVersion.Contains('+'))
-                return informalVersion.InformationalVersion.Split('+')[1];
-
-            return "0.1";
-        }
-    }
-#endif
-    public const ProtocolVersion DefaultProtocol = ProtocolVersion.v1_21_7;
-    public static readonly string ProtocolDescription = DefaultProtocol.GetDescription();
-
-
-    public const string PersistentDataPath = "persistentdata";
-    public const string PermissionPath = "permissions";
-
     internal static readonly ConcurrentDictionary<string, DateTimeOffset> throttler = new();
 
-    internal readonly CancellationTokenSource _cancelTokenSource;
-    internal readonly ILogger _logger;
+    internal readonly CancellationTokenSource cancelTokenSource;
+    internal readonly ILogger logger;
 
     public byte[] BrandData
     {
@@ -66,18 +39,14 @@ public sealed partial class Server : IServer
         }
     }
 
-    private readonly ConcurrentQueue<ClientboundPacket> _chatMessagesQueue = new();
-    private readonly ILoggerFactory loggerFactory;
-    //TODO reimplement this
-    //private readonly RconServer _rconServer;
     private readonly IUserCache userCache;
-    private readonly ServerMetrics serverMetrics;
+    private readonly ILoggerFactory loggerFactory;
     private readonly IServiceProvider serviceProvider;
     private readonly IDisposable? configWatcher;
 
     public IOptionsMonitor<WhitelistConfiguration> WhitelistConfiguration { get; }
 
-    public ProtocolVersion Protocol => DefaultProtocol;
+    public ProtocolVersion Protocol => ServerConstants.DefaultProtocol;
     public int Tps { get; private set; }
     public DateTimeOffset StartTime { get; private set; }
 
@@ -88,17 +57,18 @@ public sealed partial class Server : IServer
     public IScoreboardManager ScoreboardManager { get; private set; }
     public IWorldManager WorldManager { get; }
 
-    public ConcurrentDictionary<Guid, IPlayer> OnlinePlayers { get; } = new();
+    public ConcurrentDictionary<Guid, IPlayer> OnlinePlayers { get; } = [];
+    private ConcurrentDictionary<string, Guid> UsernameToUuidMappings { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public HashSet<string> RegisteredChannels { get; } = new();
+    public HashSet<string> RegisteredChannels { get; } = [];
+
     public ICommandHandler CommandHandler { get; }
     public ServerConfiguration Configuration { get; set; }
-    public string Version => VERSION;
+    public string Version => ServerConstants.VERSION;
 
     public string Brand { get; } = "obsidian";
     public int Port { get; }
     public IWorld DefaultWorld => WorldManager.DefaultWorld;
-    public IEnumerable<IPlayer> Players => GetPlayers();
 
     /// <summary>
     /// Creates a new instance of <see cref="Server"/>.
@@ -108,176 +78,151 @@ public sealed partial class Server : IServer
         IOptionsMonitor<ServerConfiguration> configuration,
         IOptionsMonitor<WhitelistConfiguration> whitelistConfiguration,
         ILoggerFactory loggerFactory,
-        ServerMetrics serverMetrics,
         EventDispatcher eventDispatcher,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        CommandHandler commandHandler,
+        IUserCache userCache,
+        IWorldManager worldManager)
     {
-        _logger = loggerFactory.CreateLogger<Server>();
-        _logger.LogInformation("SHA / Version: {VERSION}", VERSION);
-        _cancelTokenSource = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
-        _cancelTokenSource.Token.Register(() => _logger.LogWarning("Obsidian is shutting down..."));
-
-        //_rconServer = serviceProvider.GetRequiredService<RconServer>();
+        this.logger = loggerFactory.CreateLogger<Server>();
+        this.cancelTokenSource = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
 
         this.serviceProvider = serviceProvider;
-        this.configWatcher = configuration.OnChange(this.ConfigChanged);
+        this.WhitelistConfiguration = whitelistConfiguration;
+        this.loggerFactory = loggerFactory;
+        this.configWatcher = configuration.OnChange((config) =>
+        {
+            this.Configuration = config;
+        });
+        this.userCache = userCache;
+        this.EventDispatcher = eventDispatcher;
+        this.WorldManager = worldManager;
 
         var config = configuration.CurrentValue;
 
-        Configuration = config;
-        Port = config.Port;
+        this.Configuration = config;
+        this.Port = config.Port;
 
-        Operators = new OperatorList(this, loggerFactory);
-        ScoreboardManager = new ScoreboardManager(this, loggerFactory);
-
-        _logger.LogDebug(message: "Initializing command handler...");
-
-        CommandHandler = serviceProvider.GetRequiredService<CommandHandler>();
-
-        PluginManager = ActivatorUtilities.CreateInstance<PluginManager>(this.serviceProvider, this);
-
-        _logger.LogDebug("Registering events & commands...");
-
-        CommandHandler.RegisterCommands();
-        eventDispatcher.RegisterEvents();
-
-        _logger.LogDebug("Done registering commands.");
-
-        this.userCache = serviceProvider.GetRequiredService<IUserCache>();
-        this.EventDispatcher = serviceProvider.GetRequiredService<EventDispatcher>();
-        this.WhitelistConfiguration = whitelistConfiguration;
-        this.serverMetrics = serverMetrics;
-        this.loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-        this.WorldManager = serviceProvider.GetRequiredService<IWorldManager>();
-
-        Directory.CreateDirectory(PermissionPath);
-        Directory.CreateDirectory(PersistentDataPath);
-
-        //TODO turn this into a hosted service
-        if (config.AllowLan)
-        {
-            _ = Task.Run(async () =>
-            {
-                var udpClient = new UdpClient("224.0.2.60", 4445);
-                var timer = new PeriodicTimer(TimeSpan.FromSeconds(1.5));
-                string? lastMotd = null;
-                byte[] bytes = []; // Cached motd as utf-8 bytes
-                while (await timer.WaitForNextTickAsync(_cancelTokenSource.Token))
-                {
-                    if (config.Motd != lastMotd)
-                    {
-                        lastMotd = config.Motd;
-                        bytes = Encoding.UTF8.GetBytes($"[MOTD]{config.Motd.Replace('[', '(').Replace(']', ')')}[/MOTD][AD]{config.Port}[/AD]");
-                    }
-                    await udpClient.SendAsync(bytes, bytes.Length);
-                }
-            });
-        }
+        this.Operators = new OperatorList(this, loggerFactory);
+        this.CommandHandler = commandHandler;
+        this.PluginManager = ActivatorUtilities.CreateInstance<PluginManager>(this.serviceProvider, this);
     }
 
-    private void ConfigChanged(ServerConfiguration configuration) => this.Configuration = configuration;
+    public static int GetNextEntityId() => Interlocked.Increment(ref EntityCounter);
 
-    // TODO make sure to re-send recipes
     public void RegisterRecipes(params IRecipe[] recipes)
     {
         foreach (var recipe in recipes)
             RecipesRegistry.Recipes.Add(recipe.Identifier.ToSnakeCase(), recipe);
     }
 
-    /// <summary>
-    /// Checks if a player is online.
-    /// </summary>
-    /// <param name="username">The username you want to check for.</param>
-    /// <returns>True if the player is online.</returns>
-    public bool IsPlayerOnline(string username) => OnlinePlayers.Any(x => x.Value.Username.EqualsIgnoreCase(username));
+    public bool IsPlayerOnline(string username) => this.UsernameToUuidMappings.ContainsKey(username);
 
     public bool IsPlayerOnline(Guid uuid) => OnlinePlayers.ContainsKey(uuid);
 
-    public IPlayer GetPlayer(string username) => OnlinePlayers.FirstOrDefault(player => player.Value.Username.EqualsIgnoreCase(username)).Value;
+    public IPlayer? GetPlayer(string username)
+    {
+        if (this.UsernameToUuidMappings.TryGetValue(username, out var uuid) && OnlinePlayers.TryGetValue(uuid, out var player))
+            return player;
+
+        return null;
+    }
 
     public IPlayer? GetPlayer(Guid uuid) => OnlinePlayers.TryGetValue(uuid, out var player) ? player : null;
 
-    public IPlayer GetPlayer(int entityId) => OnlinePlayers.FirstOrDefault(player => player.Value.EntityId == entityId).Value;
-
-    private IEnumerable<IPlayer> GetPlayers()
+    public IPlayer? GetPlayer(int entityId)
     {
-        foreach (var (_, player) in OnlinePlayers)
-        {
-            yield return player;
-        }
+        if (this.Connections.TryGetValue(entityId, out var client) && OnlinePlayers.TryGetValue(client.Player!.Uuid, out var player))
+            return player;
+
+        return null;
     }
 
-    /// <summary>
-    /// Sends a message to all players on this server.
-    /// </summary>
+    public bool TryGetPlayer(string username, out IPlayer? player)
+    {
+        if (this.GetPlayer(username) is IPlayer foundPlayer)
+        {
+            player = foundPlayer;
+            return true;
+        }
+
+        player = null;
+        return false;
+    }
+
+    public bool TryGetPlayer(Guid uuid, out IPlayer? player) => this.OnlinePlayers.TryGetValue(uuid, out player);
+
+    public bool TryGetPlayer(int entityId, out IPlayer? player)
+    {
+        if (this.GetPlayer(entityId) is IPlayer foundPlayer)
+        {
+            player = foundPlayer;
+            return true;
+        }
+
+        player = null;
+        return false;
+    }
+
     public void BroadcastMessage(ChatMessage message)
     {
-        _chatMessagesQueue.Enqueue(new SystemChatPacket(message, false));
-        _logger.LogInformation(message.Text);
+        this.DefaultWorld.PacketBroadcaster.QueuePacket(new SystemChatPacket(message, false));
+        logger.LogInformation("{message}", message.Text);
     }
 
-    /// <summary>
-    /// Sends a message to all players on this server.
-    /// </summary>
-    public void BroadcastMessage(PlayerChatPacket message)
+    public void BroadcastMessage(IWorld world, ChatMessage message)
     {
-        _chatMessagesQueue.Enqueue(message);
-        _logger.LogInformation("{}", message.UnsignedContent);
+        this.DefaultWorld.PacketBroadcaster.QueuePacketToWorld(world, new SystemChatPacket(message, false));
+        logger.LogInformation("{message}", message.Text);
     }
-
-    /// <summary>
-    /// Sends a message to all players on this server.
-    /// </summary>
-    public void BroadcastMessage(string message)
-    {
-        var chatMessage = ChatMessage.Simple(message);
-
-        _chatMessagesQueue.Enqueue(new SystemChatPacket(chatMessage, false));
-        _logger.LogInformation(message);
-    }
-
-    public static int GetNextEntityId() => Interlocked.Increment(ref EntityCounter);
 
     /// <summary>
     /// Starts this server asynchronously.
     /// </summary>
     public async Task RunAsync()
     {
+        this.logger.LogInformation("SHA / Version: {VERSION}", ServerConstants.VERSION);
+
+        this.logger.LogDebug("Registering events & commands...");
+
+        this.CommandHandler.RegisterCommands();
+        this.EventDispatcher.RegisterEvents();
+
+        Directory.CreateDirectory(ServerConstants.PermissionPath);
+        Directory.CreateDirectory(ServerConstants.PersistentDataPath);
+        Directory.CreateDirectory("plugins");
+
         StartTime = DateTimeOffset.Now;
         this.Connections = new ConcurrentDictionary<int, IClient>(-1, this.MaxConnections);
 
-        _logger.LogInformation("Launching Obsidian Server v{Version}", this.Version);
+        logger.LogInformation("Launching Obsidian Server v{Version}", this.Version);
         var loadTimeStopwatch = Stopwatch.StartNew();
 
         // Check if MPDM and OM are enabled, if so, we can't handle connections
         if (Configuration.Network.MulitplayerDebugMode && Configuration.OnlineMode)
         {
-            _logger.LogError("Incompatible Config: Multiplayer debug mode can't be enabled at the same time as online mode since usernames will be overwritten");
+            logger.LogError("Incompatible Config: Multiplayer debug mode can't be enabled at the same time as online mode since usernames will be overwritten");
             await StopAsync();
             return;
         }
 
         await RecipesRegistry.InitializeAsync();
 
-        _logger.LogInformation("Loading structures...");
+        logger.LogInformation("Loading structures...");
         StructureRegistry.Initialize();
 
-        await this.userCache.LoadAsync(this._cancelTokenSource.Token);
+        await this.userCache.LoadAsync(this.cancelTokenSource.Token);
 
-        _logger.LogInformation("Loading properties...");
+        logger.LogInformation("Loading properties...");
 
         await (Operators as OperatorList).InitializeAsync();
 
-        _logger.LogInformation("Loading plugins...");
-
-        Directory.CreateDirectory("plugins");
+        logger.LogInformation("Loading plugins...");
 
         await PluginManager.LoadPluginsAsync();
 
-        //await Task.WhenAll(Configuration.DownloadPlugins.Select(path => PluginManager.LoadPluginAsync(path)));
-
         if (!Configuration.OnlineMode)
-            _logger.LogInformation("Starting in offline mode...");
+            logger.LogInformation("Starting in offline mode...");
 
         CommandsRegistry.Register(this);
 
@@ -287,24 +232,23 @@ public sealed partial class Server : IServer
             ServerSaveAsync()
         };
 
-        //if (Configuration.EnableRcon)
-        //    serverTasks.Add(_rconServer.RunAsync(this, _cancelTokenSource.Token));
-
         loadTimeStopwatch.Stop();
-        _logger.LogInformation("Server loaded in {time}", loadTimeStopwatch.Elapsed);
+        logger.LogInformation("Server loaded in {time}", loadTimeStopwatch.Elapsed);
 
         //Wait for worlds to load
         while (!this.WorldManager.ReadyToJoin)
         {
-            if (this._cancelTokenSource.IsCancellationRequested)
+            if (this.cancelTokenSource.IsCancellationRequested)
                 return;
 
             continue;
         }
 
+        ScoreboardManager = new ScoreboardManager(this, this.loggerFactory);
+
         await this.PluginManager.OnServerReadyAsync();
 
-        _logger.LogInformation("Listening for new clients...");
+        logger.LogInformation("Listening for new clients...");
 
         await this.StartAsync(this.Port);
 
@@ -314,25 +258,19 @@ public sealed partial class Server : IServer
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An error has occured");
+            logger.LogError(ex, "An error has occurred");
             throw;
         }
         finally
         {
             // Try to shut the server down gracefully.
             await this.StopAsync();
-            _logger.LogInformation("The server has been shut down");
+            logger.LogInformation("The server has been shut down");
         }
     }
 
-    public IBossBar CreateBossBar(ChatMessage title, float health, BossBarColor color, BossBarDivisionType divisionType, BossBarFlags flags) => new BossBar(this)
-    {
-        Title = title,
-        Health = health,
-        Color = color,
-        DivisionType = divisionType,
-        Flags = flags
-    };
+    public IBossBar CreateBossBar(ChatMessage title, float health, BossBarColor color, BossBarDivisionType divisionType, BossBarFlags flags) =>
+        ActivatorUtilities.CreateInstance<BossBar>(this.serviceProvider, title, health, color, divisionType, flags);
 
     public async Task ExecuteCommand(string input)
     {
@@ -341,69 +279,33 @@ public sealed partial class Server : IServer
         await CommandHandler.ProcessCommand(context);
     }
 
-    internal IEnumerable<IPlayer> PlayersInRange(World world, Vector worldPosition)
-    {
-        var (x, z) = worldPosition.ToChunkCoord();
-
-        var packedXZ = NumericsHelper.IntsToLong(x, z);
-        return world.Players.Values.Where(player => player.LoadedChunks.Contains(packedXZ));
-    }
-
-    internal void BroadcastBlockChange(World world, IBlock block, Vector location)
-    {
-        var packet = new BlockUpdatePacket(location, block.GetHashCode());
-        foreach (Player player in PlayersInRange(world, location))
-        {
-            player.Client.SendPacket(packet);
-        }
-    }
-
-    internal void BroadcastBlockChange(World world, Player initiator, IBlock block, Vector location)
-    {
-        var packet = new BlockUpdatePacket(location, block.GetHashCode());
-        foreach (Player player in PlayersInRange(world, location))
-        {
-            if (player == initiator)
-                continue;
-
-            player.Client.SendPacket(packet);
-        }
-    }
-
-    internal async Task QueueBroadcastPacketAsync(ClientboundPacket packet)
-    {
-        foreach (Player player in Players)
-            await player.Client.QueuePacketAsync(packet);
-    }
-
-    internal async Task DisconnectIfConnectedAsync(string username, ChatMessage? reason = null)
-    {
-        var player = Players.FirstOrDefault(x => x.Username == username);
-        if (player != null)
-        {
-            reason ??= "Connected from another location";
-
-            await player.KickAsync(reason);
-        }
-    }
-
     public async Task StopAsync()
     {
-        _cancelTokenSource.Cancel();
+        cancelTokenSource.Cancel();
 
         this.socket.Close();
 
-        foreach (var client in this.Connections.Values)
-        {
-            await client.DisconnectAsync("Server shutdown");
-        }
+        logger.LogDebug("Saving worlds..");
 
-        _logger.LogDebug("Flushing and disposing regions");
         await WorldManager.FlushLoadedWorldsAsync();
         await WorldManager.DisposeAsync();
         await this.PluginManager.DisposeAsync();
 
         await this.userCache.SaveAsync();
+    }
+
+    public bool AddPlayer(IPlayer player)
+    {
+        this.UsernameToUuidMappings.TryAdd(player.Username, player.Uuid);
+
+        return this.OnlinePlayers.TryAdd(player.Uuid, player);
+    }
+
+    public bool RemovePlayer(IPlayer player)
+    {
+        this.UsernameToUuidMappings.Remove(player.Username, out _);
+
+        return this.OnlinePlayers.Remove(player.Uuid, out _);
     }
 
     private async Task ServerSaveAsync()
@@ -412,9 +314,9 @@ public sealed partial class Server : IServer
 
         try
         {
-            while (await timer.WaitForNextTickAsync(this._cancelTokenSource.Token))
+            while (await timer.WaitForNextTickAsync(this.cancelTokenSource.Token))
             {
-                _logger.LogInformation("Saving world...");
+                logger.LogInformation("Saving world...");
                 await WorldManager.FlushLoadedWorldsAsync();
                 await this.userCache.SaveAsync();
             }
@@ -428,14 +330,18 @@ public sealed partial class Server : IServer
 
         var tpsMeasure = new TpsMeasure();
         var stopwatch = Stopwatch.StartNew();
-        var timer = new BalancingTimer(50, _cancelTokenSource.Token);
+        var timer = new BalancingTimer(50, cancelTokenSource.Token);
+        var keepAliveInterval = Configuration.Network.KeepAliveInterval / 50;
 
         try
         {
             while (await timer.WaitForNextTickAsync())
             {
+                if (keepAliveInterval != Configuration.Network.KeepAliveInterval / 50)
+                    keepAliveInterval = Configuration.Network.KeepAliveInterval / 50;
+
                 keepAliveTicks++;
-                if (keepAliveTicks > (Configuration.Network.KeepAliveInterval / 50)) // to clarify: one tick is 50 milliseconds. 50 * 200 = 10000 millis means 10 seconds
+                if (keepAliveTicks > keepAliveInterval)
                 {
                     foreach (var client in this.Connections.Values.Where(x => x.State == ClientState.Play || x.State == ClientState.Configuration))
                     {
@@ -446,25 +352,6 @@ public sealed partial class Server : IServer
                     }
 
                     keepAliveTicks = 0;
-                }
-
-                if (Configuration.Baah.HasValue)
-                {
-                    foreach (Player player in Players)
-                    {
-                        var soundPosition = new SoundPosition(player.Position.X, player.Position.Y, player.Position.Z);
-                        //await player.SendSoundAsync(SoundEffectBuilder.Create(SoundId.EntitySheepAmbient)
-                        //    .WithSoundPosition(soundPosition)
-                        //    .Build());
-                    }
-                }
-
-                while (_chatMessagesQueue.TryDequeue(out ClientboundPacket packet))
-                {
-                    foreach (var player in Players)
-                    {
-                        player.Client.SendPacket(packet);
-                    }
                 }
 
                 await this.WorldManager.TickWorldsAsync();
@@ -482,13 +369,10 @@ public sealed partial class Server : IServer
 
         foreach (var client in this.Connections.Values)
         {
-            if (client.State == ClientState.Play)
-                client.SendPacket(DisconnectPacket.ClientboundPlay with { Reason = ChatMessage.Simple("Server closed") });
-            else if (client.State == ClientState.Configuration)
-                client.SendPacket(DisconnectPacket.ClientboundConfiguration with { Reason = ChatMessage.Simple("Server closed") });
+            await client.DisconnectAsync("Server closed");
         }
 
-        _logger.LogInformation("The game loop has been stopped");
+        logger.LogInformation("The game loop has been stopped");
         await WorldManager.FlushLoadedWorldsAsync();
     }
 
@@ -512,7 +396,7 @@ public sealed partial class Server : IServer
 
         if (DateTimeOffset.UtcNow < timeLeft)
         {
-            this._logger.LogDebug("{ip} has been throttled for reconnecting too fast.", client.Ip!);
+            this.logger.LogDebug("{ip} has been throttled for reconnecting too fast.", client.Ip!);
             await client.DisconnectAsync("Connection Throttled! Please wait before reconnecting.");
             return true;
         }

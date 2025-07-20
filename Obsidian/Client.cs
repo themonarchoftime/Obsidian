@@ -16,7 +16,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 
 namespace Obsidian;
 
@@ -233,12 +232,15 @@ public sealed partial class Client : IClient
         if (this.State == ClientState.Login)
         {
             await this.QueuePacketAsync(new LoginDisconnectPacket { ReasonJson = reason.ToString(Globals.JsonOptions) });
+        }
+        else
+        {
+            var packet = this.State == ClientState.Play ? DisconnectPacket.ClientboundPlay with { Reason = reason }
+               : DisconnectPacket.ClientboundConfiguration with { Reason = reason };
 
-            this.Disconnect();
-            return;
+            await this.QueuePacketAsync(packet);
         }
 
-        await this.QueuePacketAsync(new DisconnectPacket { Reason = reason });
         this.Disconnect();
     }
 
@@ -326,7 +328,7 @@ public sealed partial class Client : IClient
         var removed = this.Server.Connections.Remove(this.Id, out _);
 
         if (this.Player != null)
-            this.Server.OnlinePlayers.Remove(this.Player.Uuid, out _);
+            this.Server.RemovePlayer(this.Player);
 
         this.Logger.LogInformation("Client {ip} disconnected.", this.Ip);
 

@@ -6,11 +6,11 @@ namespace Obsidian.Utilities;
 
 public sealed class OperatorList : IOperatorList
 {
-    private readonly List<Operator> operators = new();
-    private readonly Dictionary<string, OperatorRequest> requests = new();
+    private readonly List<Operator> operators = [];
+    private readonly Dictionary<string, OperatorRequest> requests = [];
     private readonly IServer server;
     private readonly ILogger _logger;
-    private string OpsFilePath => Path.Combine("config", "ops.json");
+    private static string OpsFilePath => Path.Combine("config", "ops.json");
 
     public OperatorList(IServer server, ILoggerFactory loggerFactory)
     {
@@ -20,7 +20,7 @@ public sealed class OperatorList : IOperatorList
 
     public async Task InitializeAsync()
     {
-        var fi = new FileInfo(this.OpsFilePath);
+        var fi = new FileInfo(OpsFilePath);
 
         if (fi.Exists)
         {
@@ -87,7 +87,7 @@ public sealed class OperatorList : IOperatorList
 
     public bool IsOperator(IPlayer player) => this.operators.Any(x => x.Uuid == player.Uuid);
 
-    public ImmutableList<IPlayer> GetOnlineOperators() => server.Players.Where(IsOperator).ToImmutableList();
+    public ImmutableList<IPlayer> GetOnlineOperators() => server.OnlinePlayers.Values.Where(IsOperator).ToImmutableList();
 
     private void UpdateList() =>
         File.WriteAllText(OpsFilePath, operators.ToJson());

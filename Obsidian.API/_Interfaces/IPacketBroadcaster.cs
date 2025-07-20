@@ -7,6 +7,7 @@ public interface IPacketBroadcaster
     /// <param name="packet">The packet to send.</param>
     /// <param name="excludedIds">The list of entity ids to exlude from the broadcast.</param>
     public void Broadcast(IClientboundPacket packet, params int[] excludedIds);
+    public void BroadcastTo(IClientboundPacket packet, params int[] ids);
 
     /// <summary>
     /// Sends the packets directly to connected clients without processing in a queue.
@@ -18,6 +19,8 @@ public interface IPacketBroadcaster
 
     public void BroadcastToWorldInRange(IWorld world, VectorF location, IClientboundPacket packet, params int[] excludedIds);
 
+    public void QueuePacketTo(IClientboundPacket packet, params int[] ids);
+    public void QueuePacketTo(IClientboundPacket packet, int priority, params int[] ids);
     /// <summary>
     /// Puts the packet in a priority queue for processing then broadcasting when dequeued.
     /// </summary>

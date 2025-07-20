@@ -15,8 +15,12 @@ public sealed partial class FinishConfigurationPacket
 
         client.SetState(ClientState.Play);
         await player.LoadAsync();
-        if (!server.OnlinePlayers.TryAdd(player.Uuid, player))
-            client.Logger.LogWarning("Failed to add player {Username} to online players. Undefined behavior ahead!", player.Username);
+        if (!server.AddPlayer(player))
+        {
+            await player.DisconnectAsync("Unable to complete login due to a server error. Please try again or contact an administrator.");
+            client.Logger.LogWarning("Failed to add player {Username} to online players. Disconnecting...", player.Username);
+            return;
+        }
 
         if (!CodecRegistry.TryGetDimension(player.World.DimensionName, out var codec) || !CodecRegistry.TryGetDimension("minecraft:overworld", out codec))
             throw new UnreachableException("Failed to retrieve proper dimension for player.");

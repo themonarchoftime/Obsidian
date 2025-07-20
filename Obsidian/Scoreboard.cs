@@ -3,25 +3,21 @@ using Obsidian.Net.Scoreboard;
 
 namespace Obsidian;
 
-public class Scoreboard : IScoreboard
+public class Scoreboard(string name, IPacketBroadcaster packetBroadcaster, IServer server) : IScoreboard
 {
-    private readonly Server server;
+    private readonly IPacketBroadcaster packetBroadcaster = packetBroadcaster;
+    private readonly IServer server = server;
 
-    internal readonly string name;
+    internal readonly string name = name;
+    internal readonly Dictionary<string, Score> scores = [];
 
-    internal readonly Dictionary<string, Score> scores = new Dictionary<string, Score>();
+    public ConcurrentHashSet<int> Players { get; } = [];
 
     public ScoreboardObjective Objective { get; private set; }
 
-    public List<ITeam> Teams { get; set; } = new();
+    public List<ITeam> Teams { get; set; } = [];
 
-    public Scoreboard(string name, Server server)
-    {
-        this.name = name;
-        this.server = server;
-    }
-
-    public async Task CreateOrUpdateObjectiveAsync(ChatMessage title, DisplayType displayType = DisplayType.Integer)//TODO impl new scoreboard stuff
+    public void CreateOrUpdateObjective(ChatMessage title, DisplayType displayType = DisplayType.Integer)
     {
         var packet = new SetObjectivePacket
         {
@@ -33,7 +29,7 @@ public class Scoreboard : IScoreboard
 
         if (this.Objective != null)
         {
-            await this.UpdateObjectiveAsync(packet);
+            this.UpdateObjective(packet);
         }
         else
         {
@@ -44,30 +40,26 @@ public class Scoreboard : IScoreboard
                 displayType
             );
 
-            foreach (var (_, player) in this.server.OnlinePlayers)
-            {
-                if (player.CurrentScoreboard == this)
-                {
-                    await player.Client.QueuePacketAsync(packet);
+            var players = this.Players.ToArray();
 
-                    foreach (var score in this.scores.Select(x => x.Value).OrderByDescending(x => x.Value))
-                    {
-                        await player.Client.QueuePacketAsync(new SetScorePacket
-                        {
-                            EntityName = score.DisplayText,
-                            ObjectiveName = this.name,
-                            Value = score.Value
-                        });
-                    }
-                }
+            foreach (var score in this.scores.Select(x => x.Value).OrderByDescending(x => x.Value))
+            {
+
+                this.packetBroadcaster.QueuePacketTo(new SetScorePacket
+                {
+                    EntityName = score.DisplayText,
+                    ObjectiveName = this.name,
+                    Value = score.Value
+                }, players);
             }
         }
     }
 
-    //TODO impl new scoreboard stuff
-    public async Task CreateOrUpdateScoreAsync(string scoreName, string displayText, int? value = null)
+    public void CreateOrUpdateScore(string scoreName, string displayText, int? value = null)
     {
         var score = new Score(displayText, value ?? 0);
+
+        var players = this.Players.ToArray();
 
         if (this.scores.TryGetValue(scoreName, out var cachedScore))
         {
@@ -76,17 +68,12 @@ public class Scoreboard : IScoreboard
             if (value.HasValue)
                 score.Value = (int)value;
 
-            foreach (var (_, player) in this.server.OnlinePlayers)
+            this.packetBroadcaster.QueuePacketTo(new SetScorePacket
             {
-                if (player.CurrentScoreboard != this)
-                    continue;
-
-                await player.Client.QueuePacketAsync(new SetScorePacket
-                {
-                    EntityName = score.DisplayText,
-                    ObjectiveName = this.name,
-                });
-            }
+                EntityName = score.DisplayText,
+                ObjectiveName = this.name,
+                Value = score.Value
+            }, players);
 
             score.DisplayText = displayText;
         }
@@ -103,40 +90,26 @@ public class Scoreboard : IScoreboard
             this.scores[scoreName] = score;
         }
 
-        foreach (var (_, player) in this.server.OnlinePlayers)
+        foreach (var (_, s) in this.scores.OrderBy(x => x.Value.Value))
         {
-            if (player.CurrentScoreboard != this)
-                continue;
-
-            foreach (var (_, s) in this.scores.OrderBy(x => x.Value.Value))
+            this.packetBroadcaster.QueuePacketTo(new SetScorePacket
             {
-                await player.Client.QueuePacketAsync(new SetScorePacket
-                {
-                    EntityName = s.DisplayText,
-                    ObjectiveName = this.name,
-                    Value = s.Value,
-                });
-            }
+                EntityName = s.DisplayText,
+                ObjectiveName = this.name,
+                Value = s.Value,
+            }, players);
         }
-
     }
 
-    //TODO impl new scoreboard stuff
-    public async Task<bool> RemoveScoreAsync(string scoreName)
+    public bool RemoveScore(string scoreName)
     {
         if (this.scores.Remove(scoreName, out var score))
         {
-            foreach (var (_, player) in this.server.OnlinePlayers)
+            this.packetBroadcaster.QueuePacketTo(new SetScorePacket
             {
-                if (player.CurrentScoreboard != this)
-                    continue;
-
-                await player.Client.QueuePacketAsync(new SetScorePacket
-                {
-                    EntityName = score.DisplayText,
-                    ObjectiveName = this.name,
-                });
-            }
+                EntityName = score.DisplayText,
+                ObjectiveName = this.name,
+            }, this.Players.ToArray());
 
             return true;
         }
@@ -146,7 +119,7 @@ public class Scoreboard : IScoreboard
 
     public Score GetScore(string scoreName) => this.scores.GetValueOrDefault(scoreName);
 
-    public async Task RemoveObjectiveAsync()
+    public void RemoveObjective()
     {
         var obj = new SetObjectivePacket
         {
@@ -154,39 +127,29 @@ public class Scoreboard : IScoreboard
             Mode = ScoreboardMode.Remove
         };
 
-        foreach (var (_, player) in this.server.OnlinePlayers)
-        {
-            if (player.CurrentScoreboard == this)
-                await player.Client.QueuePacketAsync(obj);
-        }
+        this.packetBroadcaster.Broadcast(obj, this.Players.ToArray());
     }
 
-    //TODO impl new scoreboard stuff
-    private async Task UpdateObjectiveAsync(SetObjectivePacket packet)
+    private void UpdateObjective(SetObjectivePacket packet)
     {
-        foreach (var (_, player) in this.server.OnlinePlayers)
-        {
-            if (player.CurrentScoreboard == this)
-            {
-                await player.Client.QueuePacketAsync(packet);
+        var players = this.Players.ToArray();
+        this.packetBroadcaster.QueuePacketTo(packet, players);
 
-                foreach (var score in this.scores.Select(x => x.Value).OrderByDescending(x => x.Value))
-                {
-                    await player.Client.QueuePacketAsync(new SetScorePacket
-                    {
-                        EntityName = score.DisplayText,
-                        ObjectiveName = this.name,
-                        Value = score.Value,
-                    });
-                }
-            }
+        foreach (var score in this.scores.Select(x => x.Value).OrderByDescending(x => x.Value))
+        {
+            this.packetBroadcaster.Broadcast(new SetScorePacket
+            {
+                EntityName = score.DisplayText,
+                ObjectiveName = this.name,
+                Value = score.Value,
+            }, players);
         }
     }
 
-    public async Task<ITeam> CreateTeamAsync(string name, ChatMessage displayName, NameTagVisibility nameTagVisibility, CollisionRule collisionRule,
+    public ITeam CreateTeam(string name, ChatMessage displayName, NameTagVisibility nameTagVisibility, CollisionRule collisionRule,
         TeamColor color, params string[] entities)
     {
-        var team = new Team(this, this.server)
+        var team = new Team(this, this.packetBroadcaster)
         {
             Name = name,
             DisplayName = displayName,
@@ -196,16 +159,16 @@ public class Scoreboard : IScoreboard
             Entities = entities.ToHashSet()
         };
 
-        await team.CreateAsync();
+        team.Create();
 
         this.Teams.Add(team);
 
         return team;
     }
-    public async Task<ITeam> CreateTeamAsync(string name, ChatMessage displayName, NameTagVisibility nameTagVisibility, CollisionRule collisionRule,
+    public ITeam CreateTeam(string name, ChatMessage displayName, NameTagVisibility nameTagVisibility, CollisionRule collisionRule,
         TeamColor color, ChatMessage prefix, ChatMessage suffix, params string[] entities)
     {
-        var team = new Team(this, this.server)
+        var team = new Team(this, this.packetBroadcaster)
         {
             Name = name,
             DisplayName = displayName,
@@ -217,10 +180,13 @@ public class Scoreboard : IScoreboard
             Entities = entities.ToHashSet()
         };
 
-        await team.CreateAsync();
+        team.Create();
 
         this.Teams.Add(team);
 
         return team;
     }
+
+    public void AddPlayer(int entityId) => this.Players.Add(entityId);
+    public bool RemovePlayer(int entityId) => this.Players.TryRemove(entityId);
 }
