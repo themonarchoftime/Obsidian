@@ -4,7 +4,6 @@ using Obsidian.API.Events;
 using Obsidian.API.Inventory;
 using Obsidian.Entities;
 using Obsidian.Net.Packets.Play.Clientbound;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Obsidian.Events;
@@ -256,11 +255,9 @@ public partial class MainEventHandler
         var player = args.Player;
         var clickedItem = args.Item;
         var button = args.Button;
-        var logger = player.Client.Logger;
 
         if (!player.CarriedItem.IsNullOrAir())
         {
-            logger.LogInformation("Item count: {count} - {type}", player.CarriedItem.Count, player.CarriedItem.Holder.UnlocalizedName);
             switch (button)
             {
                 case 0:
@@ -272,7 +269,6 @@ public partial class MainEventHandler
                     player.CarriedItem = newItem;
 
                     container.SetItem(clickedSlot, new(newItem));
-                    logger.LogInformation("Setting item in container slot: {slot} - {item}", clickedSlot, player.CarriedItem.Holder.UnlocalizedName);
                     break;
                 default:
                     break;
@@ -281,12 +277,8 @@ public partial class MainEventHandler
             return;
         }
 
-        logger.LogInformation("Carried item is null or air");
-
         if (clickedItem.IsNullOrAir())
             return;
-
-        logger.LogInformation("Picked up item: {item}", clickedItem.Holder.UnlocalizedName);
 
         player.CarriedItem = clickedItem;
         container.RemoveItem(clickedSlot);
@@ -319,15 +311,5 @@ public partial class MainEventHandler
         container.SetItem(clickedSlot, currentItem);
 
         player.Inventory.RemoveItem(localSlot);
-    }
-
-    private enum DraggingState
-    {
-        AddSlotLeft = 1,
-        AddSlotRight = 5,
-        AddSlotMiddle = 9,
-        EndLeft = 2,
-        EndRight = 6,
-        EndMiddle = 10
     }
 }
