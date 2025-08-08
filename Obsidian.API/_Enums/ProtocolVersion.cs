@@ -78,6 +78,7 @@ public enum ProtocolVersion
     [Description("1.21.6")]
     v1_21_6 = 771,
 
-    [Description("1.21.7")]
-    v1_21_7 = 772,
+    //Both 1.21.7 and 1.21.8 have the same PVN
+    [Description("1.21.8")]
+    v1_21_8 = 772,
 }
