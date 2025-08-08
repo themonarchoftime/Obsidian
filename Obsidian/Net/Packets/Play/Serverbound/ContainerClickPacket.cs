@@ -75,10 +75,10 @@ public partial class ContainerClickPacket
         if (this.IsPlayerInventory || forPlayer)
             container = player.Inventory;
 
-        var clickedItem = container[slot];
+        var clickedItem = slot != -999 ? container[slot] : null;
 
         // Maybe we should have an event called ValidateContainerContentsEventArgs? 
-        if (!this.CarriedItem.Compare(clickedItem))
+        if (clickedItem != null && this.CarriedItem != null && !this.CarriedItem.Compare(clickedItem))
         {
             player.Client.Logger.LogWarning("Item being carried does not match the one that was picked up from the inventory.");
 
@@ -95,15 +95,17 @@ public partial class ContainerClickPacket
         var invalidItems = new Dictionary<short, IHashedItemStack>();
         foreach (var (changedSlot, hashedItem) in this.ChangedSlots)
         {
-            var checkedItem = container[changedSlot];
+            var currentContainer = changedSlot > container.Size || forPlayer ? player.Inventory : player.OpenedContainer;
 
-            if(hashedItem == null)
+            var checkedItem = currentContainer[changedSlot];
+
+            if (hashedItem == null)
             {
-                container.RemoveItem(changedSlot);
+                currentContainer.RemoveItem(changedSlot);
                 continue;
             }
 
-            if (!hashedItem.Compare(checkedItem))
+            if (checkedItem != null && !hashedItem.Compare(checkedItem))
                 invalidItems.Add(changedSlot, hashedItem);
         }
 
@@ -118,6 +120,9 @@ public partial class ContainerClickPacket
             });
         }
 
+        if (this.ClickType == ClickType.QuickCraft && ClickedSlot == -999)
+            player.IsDragging = DraggingButtons.Contains(Button);
+
         await server.EventDispatcher.ExecuteEventAsync(new ContainerClickEventArgs(player, server, container)
         {
             ClickedSlot = slot,
@@ -127,5 +132,7 @@ public partial class ContainerClickPacket
             ContainerId = this.ContainerId,
         });
     }
+
+    private static readonly sbyte[] DraggingButtons = [0, 4, 8];
 }
 

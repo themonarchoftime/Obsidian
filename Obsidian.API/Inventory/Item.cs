@@ -2,8 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 
 namespace Obsidian.API.Inventory;
-
-public readonly struct Item : INetworkSerializable<Item>
+public readonly record struct Item : INetworkSerializable<Item>
 {
     public required string UnlocalizedName { get; init; }
 
@@ -29,4 +28,6 @@ public readonly struct Item : INetworkSerializable<Item>
 
     public static void Write(Item value, INetStreamWriter writer) => writer.WriteVarInt(value.Id);
     public static Item Read(INetStreamReader reader) => ItemsRegistry.Get(reader);
+
+    public override string ToString() => $"{{{this.UnlocalizedName}}}";
 }

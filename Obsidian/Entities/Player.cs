@@ -17,7 +17,7 @@ namespace Obsidian.Entities;
 [MinecraftEntity("minecraft:player")]
 public sealed partial class Player : Living, IPlayer
 {
-    private byte containerId = 0;
+    public byte CurrentContainerId { get; set; } = 0;
 
     public IClient Client { get; internal set; }
 
@@ -26,7 +26,7 @@ public sealed partial class Player : Living, IPlayer
     internal HashSet<IPlayer> visiblePlayers = [];
 
     public bool IsDragging { get; set; }
-
+    public List<short> DraggedSlots { get; set; } = [];
     public int TeleportId { get; set; }
 
     // <summary>
@@ -67,7 +67,7 @@ public sealed partial class Player : Living, IPlayer
 
     public Vector? LastDeathLocation { get; set; }
 
-    public ItemStack? LastClickedItem { get; set; }
+    public ItemStack? CarriedItem { get; set; }
 
     public IBlock? LastClickedBlock { get; internal set; }
 
@@ -92,8 +92,8 @@ public sealed partial class Player : Living, IPlayer
 
     public IScoreboard? CurrentScoreboard
     {
-        get; 
-        
+        get;
+
         set
         {
             if (field == value)
@@ -118,7 +118,7 @@ public sealed partial class Player : Living, IPlayer
 
     public short CurrentHeldItemSlot
     {
-        get => (short)(field > 0 ? field - 36 : field);
+        get => field;
         set
         {
             if (value is < 0 or > 8)
@@ -603,9 +603,9 @@ public sealed partial class Player : Living, IPlayer
 
     public byte GetNextContainerId()
     {
-        containerId = (byte)(containerId % 255 + 1);
+        CurrentContainerId = (byte)(CurrentContainerId % 255 + 1);
 
-        return containerId;
+        return CurrentContainerId;
     }
 
     public override string ToString() => Username;

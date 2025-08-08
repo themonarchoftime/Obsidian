@@ -18,10 +18,11 @@ public class Ingredient : IEnumerable<ItemStack>
 
     public void Remove(ItemStack item) => this.items.Remove(item);
 
-    /// <inheritdoc/>
     public IEnumerator<ItemStack> GetEnumerator() => new IngredientEnumerator(this.items);
 
     IEnumerator IEnumerable.GetEnumerator() => (IEnumerator)this;
+
+    public bool CanBe(ItemStack item) => this.items.Any(x => x.Equals(item));
 
     private class IngredientEnumerator : IEnumerator<ItemStack>
     {

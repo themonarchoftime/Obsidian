@@ -1,7 +1,11 @@
-﻿using Obsidian.API.Events;
+﻿using Microsoft.Extensions.Logging;
+using Obsidian.API.Containers;
+using Obsidian.API.Events;
 using Obsidian.API.Inventory;
 using Obsidian.Entities;
 using Obsidian.Net.Packets.Play.Clientbound;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Obsidian.Events;
 public partial class MainEventHandler
@@ -9,10 +13,10 @@ public partial class MainEventHandler
     private const int OutsideInventory = -999;
 
     [EventPriority(Priority = Priority.Internal)]
-    public ValueTask OnInventoryClick(ContainerClickEventArgs args)
+    public async ValueTask OnInventoryClick(ContainerClickEventArgs args)
     {
         if (args.IsCancelled)
-            return default;
+            return;
 
         switch (args.ClickType)
         {
@@ -38,7 +42,47 @@ public partial class MainEventHandler
                 break;
         }
 
-        return default;
+        await this.HandleCraftingAsync(args);
+    }
+
+    private async ValueTask HandleCraftingAsync(ContainerClickEventArgs args)
+    {
+        var container = args.Container;
+        var player = args.Player;
+
+        if (container is not CraftingTable table)
+            return;
+
+        var recipe = RecipesRegistry.FindRecipe(table);
+
+        if (recipe is null)
+        {
+            if (container[9] != null)
+                container.RemoveItem(9);
+
+            await player.Client.QueuePacketAsync(new ContainerSetSlotPacket
+            {
+                Slot = 0,
+                ContainerId = player.CurrentContainerId,
+                SlotData = null
+            });
+
+            logger.LogTrace("No recipe found: {table}", table);
+            return;
+        }
+
+        logger.LogTrace("Found Recipe: {recipe}", recipe.Identifier);
+
+        var result = recipe.Result.First();
+        container.SetItem(9, result);
+
+
+        await player.Client.QueuePacketAsync(new ContainerSetSlotPacket
+        {
+            Slot = 0,
+            ContainerId = player.CurrentContainerId,
+            SlotData = result
+        });
     }
 
     private static void HandlePickupAll(ContainerClickEventArgs args)
@@ -99,39 +143,57 @@ public partial class MainEventHandler
 
     private static void HandleQuickCraft(ContainerClickEventArgs args)
     {
-        var clickedSlot = args.ClickedSlot;
         var container = args.Container;
         var player = args.Player;
-        var button = args.Button;
-        var carriedItem = args.Item;
+        var clickedSlot = args.ClickedSlot;
+        var state = (DraggingState)args.Button;
 
-        if (clickedSlot == OutsideInventory)
+        if (!player.IsDragging)
         {
-            player.IsDragging = button switch
+            if (player.DraggedSlots.Count == 0 || state != DraggingState.EndLeft)
+                return;
+
+            int totalItems = player.CarriedItem.Count;
+            int perSlot = totalItems / player.DraggedSlots.Count;
+            //int remainder = totalItems % player.DraggedSlots.Count;
+
+            var span = CollectionsMarshal.AsSpan(player.DraggedSlots);
+            for (var i = 0; i < player.DraggedSlots.Count; i++)
             {
-                0 or 4 or 8 => true,
-                2 or 6 or 10 => false,
-                _ => player.IsDragging
-            };
+                var slotIndex = span[i];
+                var item = container.GetItem(slotIndex);
+
+                var amount = Math.Min(perSlot, player.CarriedItem.MaxStackSize - (item?.Count ?? 0));
+
+                if (amount > 0)
+                {
+                    container.SetItem(slotIndex, item ?? new(player.CarriedItem, amount));
+                    player.CarriedItem -= amount;
+                }
+
+                if (player.CarriedItem.Count <= 0)
+                    break;
+            }
+
+            player.DraggedSlots.Clear();
+            return;
         }
-        else if (player.IsDragging)
+
+        switch (state)
         {
-            if (player.Gamemode == Gamemode.Creative)
-            {
-                if (button != 9)
-                    return;
-
-                container.SetItem(clickedSlot, carriedItem);
-            }
-            else
-            {
-                // 1 = left mouse
-                // 5 = right mouse
-                if (button != 1 && button != 5)
-                    return;
-
-                container.SetItem(clickedSlot, carriedItem);
-            }
+            case DraggingState.AddSlotLeft:
+                if (!player.DraggedSlots.Contains(clickedSlot))
+                    player.DraggedSlots.Add(clickedSlot);
+                break;
+            case DraggingState.AddSlotRight:
+                container.SetItem(clickedSlot, player.CarriedItem);
+                player.CarriedItem -= 1;
+                break;
+            case DraggingState.AddSlotMiddle:
+                container.SetItem(clickedSlot, new(player.CarriedItem, player.CarriedItem.MaxStackSize));
+                break;
+            default:
+                break;
         }
     }
 
@@ -189,26 +251,45 @@ public partial class MainEventHandler
 
     private static void HandlePickup(ContainerClickEventArgs args)
     {
-        var carriedItem = args.Item;
         var clickedSlot = args.ClickedSlot;
         var container = args.Container;
         var player = args.Player;
+        var clickedItem = args.Item;
+        var button = args.Button;
+        var logger = player.Client.Logger;
 
-        if (carriedItem == null)
-            return;
-
-        if (!carriedItem.IsAir)
+        if (!player.CarriedItem.IsNullOrAir())
         {
-            player.LastClickedItem = carriedItem;
+            logger.LogInformation("Item count: {count} - {type}", player.CarriedItem.Count, player.CarriedItem.Holder.UnlocalizedName);
+            switch (button)
+            {
+                case 0:
+                    container.SetItem(clickedSlot, player.CarriedItem);
+                    player.CarriedItem = null;
+                    break;
+                case 1:
+                    var newItem = player.CarriedItem - 1;
+                    player.CarriedItem = newItem;
 
-            container.RemoveItem(clickedSlot);
+                    container.SetItem(clickedSlot, new(newItem));
+                    logger.LogInformation("Setting item in container slot: {slot} - {item}", clickedSlot, player.CarriedItem.Holder.UnlocalizedName);
+                    break;
+                default:
+                    break;
+            }
 
             return;
         }
 
-        container.SetItem(clickedSlot, player.LastClickedItem);
+        logger.LogInformation("Carried item is null or air");
 
-        player.LastClickedItem = carriedItem;
+        if (clickedItem.IsNullOrAir())
+            return;
+
+        logger.LogInformation("Picked up item: {item}", clickedItem.Holder.UnlocalizedName);
+
+        player.CarriedItem = clickedItem;
+        container.RemoveItem(clickedSlot);
     }
 
     private static void HandleSwap(ContainerClickEventArgs args)
@@ -238,5 +319,15 @@ public partial class MainEventHandler
         container.SetItem(clickedSlot, currentItem);
 
         player.Inventory.RemoveItem(localSlot);
+    }
+
+    private enum DraggingState
+    {
+        AddSlotLeft = 1,
+        AddSlotRight = 5,
+        AddSlotMiddle = 9,
+        EndLeft = 2,
+        EndRight = 6,
+        EndMiddle = 10
     }
 }

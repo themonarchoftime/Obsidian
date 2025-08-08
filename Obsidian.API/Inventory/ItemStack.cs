@@ -1,9 +1,11 @@
 ﻿using Obsidian.API.Inventory.DataComponents;
 using Obsidian.API.Registries;
+using Obsidian.API.Utilities;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Obsidian.API.Inventory;
 
-public sealed record class ItemStack : DataComponentsStorage, IEquatable<ItemStack>
+public sealed class ItemStack : DataComponentsStorage, IEquatable<ItemStack>
 {
     public static readonly ItemStack Air = new(ItemsRegistry.Air, 0);
 
@@ -22,7 +24,7 @@ public sealed record class ItemStack : DataComponentsStorage, IEquatable<ItemSta
 
     public bool IsAir => Type == Material.Air;
 
-    public ItemStack(Item holder, int count = 1, params List<IDataComponent> components)
+    public ItemStack(Item holder, int count = 1, params IEnumerable<DataComponent> components)
     {
         this.Holder = holder;
         this.Count = count;
@@ -30,12 +32,26 @@ public sealed record class ItemStack : DataComponentsStorage, IEquatable<ItemSta
         this.InitializeComponents(components);
     }
 
+    public ItemStack([DisallowNull] ItemStack item, int count = 1) : this(item.Holder, count, item.InternalStorage.Values) { }
+
     public static ItemStack operator -(ItemStack item, int value)
     {
         if (item.Count <= 0)
             return Air;
 
         item.Count = Math.Max(0, item.Count - value);
+
+        return item;
+    }
+
+    public static ItemStack operator /(ItemStack item, int value)
+    {
+        if (item.Count <= 0)
+            return Air;
+
+        item.Count = Math.Max(0, item.Count / value);
+
+        Console.WriteLine($"New Count: {item.Count}");
 
         return item;
     }
@@ -60,17 +76,19 @@ public sealed record class ItemStack : DataComponentsStorage, IEquatable<ItemSta
         return item;
     }
 
-    private void InitializeComponents(params List<IDataComponent> components)
+    //TODO: Fix equality check for ItemStack DataComponents
+    public override int GetHashCode() => HashCode.Combine(this.Holder, this.InternalStorage);
+
+    private void InitializeComponents(params IEnumerable<DataComponent> components)
     {
-        // Every item gets these components
         foreach (var defaultComponent in ComponentBuilder.DefaultItemComponents)
             this.Add(defaultComponent);
 
         foreach (var component in components)
         {
-            if (this.TryGetComponent(component.Type, out var resolvedComponent))
+            if(this.ContainsKey(component.Type))
             {
-                resolvedComponent = component;
+                this.InternalStorage[component.Type] = component;
                 continue;
             }
 
@@ -78,4 +96,10 @@ public sealed record class ItemStack : DataComponentsStorage, IEquatable<ItemSta
         }
     }
 
+    public override string ToString() => $"{this.Holder.UnlocalizedName}";
+
+    public override bool Equals(object obj) => Equals(obj as ItemStack);
+
+    public bool Equals(ItemStack? other) => other is not null && this.Holder.Equals(other.Holder) &&
+        this.InternalStorage.SequenceEqual(other.InternalStorage);
 }
